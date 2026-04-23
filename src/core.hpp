@@ -13,6 +13,7 @@ constexpr double kBallRadius = 0.028575;
 constexpr double kBallDiameter = kBallRadius * 2.0;
 constexpr double kCornerPocketMouth = 0.0762;
 constexpr double kSidePocketMouth = 0.0825;
+constexpr double kCushionNoseInset = 0.035;
 constexpr double kFixedStep = 1.0 / 240.0;
 
 struct Vec2 {
@@ -123,7 +124,7 @@ struct RulesState {
   bool ballInHand = false;
   bool pendingGroupChoice = false;
   std::array<Player, 2> players{};
-  std::string message = "Player 1 breaks";
+  std::string message = "1号玩家开球";
 };
 
 struct TurnDecision {

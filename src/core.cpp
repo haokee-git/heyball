@@ -31,6 +31,37 @@ bool ContainsNumber(const std::vector<int> &values, int number) {
   return std::find(values.begin(), values.end(), number) != values.end();
 }
 
+struct CushionSegment {
+  Vec2 a{};
+  Vec2 b{};
+  Vec2 normal{};
+};
+
+Vec2 ClosestPointOnSegment(Vec2 p, Vec2 a, Vec2 b) {
+  const Vec2 ab = b - a;
+  const double denom = LengthSq(ab);
+  if (denom < 1e-12) {
+    return a;
+  }
+  const double t = Clamp(Dot(p - a, ab) / denom, 0.0, 1.0);
+  return a + ab * t;
+}
+
+std::array<CushionSegment, 6> CushionSegments() {
+  const double left = -kTableWidth * 0.5 + kCushionNoseInset;
+  const double right = kTableWidth * 0.5 - kCushionNoseInset;
+  const double top = -kTableHeight * 0.5 + kCushionNoseInset;
+  const double bottom = kTableHeight * 0.5 - kCushionNoseInset;
+  const double cornerGap = kCornerPocketMouth * 0.62 + kCushionNoseInset;
+  const double sideGap = kSidePocketMouth * 0.52 + kCushionNoseInset * 0.5;
+  return {{{{left + cornerGap, top}, {-sideGap, top}, {0.0, 1.0}},
+           {{sideGap, top}, {right - cornerGap, top}, {0.0, 1.0}},
+           {{left + cornerGap, bottom}, {-sideGap, bottom}, {0.0, -1.0}},
+           {{sideGap, bottom}, {right - cornerGap, bottom}, {0.0, -1.0}},
+           {{left, top + cornerGap}, {left, bottom - cornerGap}, {1.0, 0.0}},
+           {{right, top + cornerGap}, {right, bottom - cornerGap}, {-1.0, 0.0}}}};
+}
+
 } // namespace
 
 Vec2 operator+(Vec2 a, Vec2 b) { return {a.x + b.x, a.y + b.y}; }
@@ -84,12 +115,12 @@ BallGroup GroupForBall(int number) {
 const char *GroupName(BallGroup group) {
   switch (group) {
   case BallGroup::Solids:
-    return "solids";
+    return "全色球";
   case BallGroup::Stripes:
-    return "stripes";
+    return "半色球";
   case BallGroup::Open:
   default:
-    return "open";
+    return "未定";
   }
 }
 
@@ -183,10 +214,10 @@ bool PhysicsWorld::IsMoving(double threshold) const {
 }
 
 bool PhysicsWorld::CanPlaceCue(Vec2 pos) const {
-  const double left = -kTableWidth * 0.5 + kBallRadius;
-  const double right = kTableWidth * 0.5 - kBallRadius;
-  const double top = -kTableHeight * 0.5 + kBallRadius;
-  const double bottom = kTableHeight * 0.5 - kBallRadius;
+  const double left = -kTableWidth * 0.5 + kCushionNoseInset + kBallRadius;
+  const double right = kTableWidth * 0.5 - kCushionNoseInset - kBallRadius;
+  const double top = -kTableHeight * 0.5 + kCushionNoseInset + kBallRadius;
+  const double bottom = kTableHeight * 0.5 - kCushionNoseInset - kBallRadius;
   if (pos.x < left || pos.x > right || pos.y < top || pos.y > bottom) {
     return false;
   }
@@ -357,49 +388,40 @@ void PhysicsWorld::ResolveBallContacts(ShotEvents *events) {
 }
 
 void PhysicsWorld::ResolveRailContacts(ShotEvents *events) {
-  const double left = -kTableWidth * 0.5 + kBallRadius;
-  const double right = kTableWidth * 0.5 - kBallRadius;
-  const double top = -kTableHeight * 0.5 + kBallRadius;
-  const double bottom = kTableHeight * 0.5 - kBallRadius;
+  const auto segments = CushionSegments();
 
   for (Ball &ball : balls_) {
     if (ball.pocketed || ball.sinking) {
       continue;
     }
-    Vec2 normal{};
-    bool hit = false;
-    if (ball.pos.x < left) {
-      ball.pos.x = left;
-      normal = {1.0, 0.0};
-      hit = true;
-    } else if (ball.pos.x > right) {
-      ball.pos.x = right;
-      normal = {-1.0, 0.0};
-      hit = true;
-    }
-    if (ball.pos.y < top) {
-      ball.pos.y = top;
-      normal = {0.0, 1.0};
-      hit = true;
-    } else if (ball.pos.y > bottom) {
-      ball.pos.y = bottom;
-      normal = {0.0, -1.0};
-      hit = true;
-    }
-    if (!hit) {
-      continue;
-    }
-
-    const double vN = Dot(ball.vel, normal);
-    if (vN < 0.0) {
-      ball.vel -= normal * ((1.0 + kRestitutionRail) * vN);
-    }
-    const Vec2 t = Perp(normal);
+    bool hitAny = false;
+    for (const CushionSegment &segment : segments) {
+      const Vec2 closest = ClosestPointOnSegment(ball.pos, segment.a, segment.b);
+      const Vec2 delta = ball.pos - closest;
+      const double dist = Length(delta);
+      if (dist >= kBallRadius) {
+        continue;
+      }
+      Vec2 normal = segment.normal;
+      if (dist > 1e-8) {
+        const Vec2 candidate = delta / dist;
+        if (Dot(candidate, segment.normal) > -0.05) {
+          normal = candidate;
+        }
+      }
+      ball.pos += normal * (kBallRadius - dist + 0.0002);
+      const double vN = Dot(ball.vel, normal);
+      if (vN < 0.0) {
+        ball.vel -= normal * ((1.0 + kRestitutionRail) * vN);
+      }
+      const Vec2 t = Perp(normal);
       const double spinKick = ball.sideOmega * kBallRadius * 0.095;
-    ball.vel += t * spinKick;
-    ball.vel -= t * (Dot(ball.vel, t) * 0.035);
-    ball.sideOmega *= 0.72;
-    if (events) {
+      ball.vel += t * spinKick;
+      ball.vel -= t * (Dot(ball.vel, t) * 0.035);
+      ball.sideOmega *= 0.72;
+      hitAny = true;
+    }
+    if (hitAny && events) {
       events->railContacts.insert(ball.number);
     }
   }
@@ -438,26 +460,26 @@ void PhysicsWorld::CheckPockets(ShotEvents *events) {
 void RulesEngine::ResetRack(int breaker) {
   state_ = RulesState{};
   state_.currentPlayer = breaker;
-  state_.message = breaker == 0 ? "Player 1 breaks" : "Player 2 breaks";
+  state_.message =
+      std::to_string(breaker + 1) + "号玩家开球";
 }
 
 TurnDecision RulesEngine::ForceFoul(const std::string &reason) {
   SwitchTurn();
   state_.ballInHand = true;
-  state_.message = reason + ". Ball in hand for Player " +
-                   std::to_string(state_.currentPlayer + 1);
+  state_.message = reason + "，" + std::to_string(state_.currentPlayer + 1) +
+                   "号玩家获得自由球";
   return {Phase::BallInHand, state_.message};
 }
 
 TurnDecision RulesEngine::ChooseGroup(BallGroup group) {
   if (!state_.pendingGroupChoice ||
       (group != BallGroup::Solids && group != BallGroup::Stripes)) {
-    return {Phase::GroupChoice, "Choose solids or stripes"};
+    return {Phase::GroupChoice, "请选择全色球或半色球"};
   }
   AssignGroups(state_.currentPlayer, group);
   state_.pendingGroupChoice = false;
-  state_.message = std::string("Player ") +
-                   std::to_string(state_.currentPlayer + 1) + " takes " +
+  state_.message = std::to_string(state_.currentPlayer + 1) + "号玩家选择" +
                    GroupName(group);
   return {Phase::Aiming, state_.message};
 }
@@ -475,14 +497,13 @@ TurnDecision RulesEngine::ApplyShot(const ShotEvents &events,
       state_.breakShot = false;
       world.SpotBall(8);
       if (events.cuePocketed) {
-        return ForceFoul("Cue ball scratched on the break");
+        return ForceFoul("开球白球落袋");
       }
-      state_.message = "Eight on break is spotted. Shooter continues";
+      state_.message = "开球打进8号球，8号球复位，击球方继续";
       return {Phase::Aiming, state_.message};
     }
     state_.winner = legalEight ? state_.currentPlayer : 1 - state_.currentPlayer;
-    state_.message = std::string("Player ") + std::to_string(state_.winner + 1) +
-                     " wins the rack";
+    state_.message = std::to_string(state_.winner + 1) + "号玩家赢得本局";
     return {Phase::RackOver, state_.message};
   }
 
@@ -491,18 +512,18 @@ TurnDecision RulesEngine::ApplyShot(const ShotEvents &events,
 
   if (events.cuePocketed) {
     foul = true;
-    reason = "Cue ball pocketed";
+    reason = "白球落袋";
   } else if (events.firstContact < 0) {
     foul = true;
-    reason = "No ball contacted";
+    reason = "未碰到目标球";
   } else if (!IsLegalFirstContact(events.firstContact, world)) {
     foul = true;
-    reason = "Wrong first contact";
+    reason = "首次触球错误";
   }
 
   if (!foul && !events.PottedObject() && events.railContacts.empty()) {
     foul = true;
-    reason = "No ball potted and no cushion after contact";
+    reason = "碰球后无球落袋且无球触库";
   }
 
   if (state_.breakShot) {
@@ -510,7 +531,7 @@ TurnDecision RulesEngine::ApplyShot(const ShotEvents &events,
     state_.breakShot = false;
     if (!legalBreak && !foul) {
       foul = true;
-      reason = "Illegal break";
+      reason = "开球不合法";
     }
   }
 
@@ -523,7 +544,7 @@ TurnDecision RulesEngine::ApplyShot(const ShotEvents &events,
     const bool stripes = events.PottedGroup(BallGroup::Stripes);
     if (solids && stripes) {
       state_.pendingGroupChoice = true;
-      state_.message = "Choose group: solids or stripes";
+      state_.message = "请选择球组：全色球或半色球";
       return {Phase::GroupChoice, state_.message};
     }
     if (solids || stripes) {
@@ -536,14 +557,14 @@ TurnDecision RulesEngine::ApplyShot(const ShotEvents &events,
   const bool ownPotted = (own != BallGroup::Open) && events.PottedGroup(own);
   const bool openPotted = own == BallGroup::Open && events.PottedObject();
   if (ownPotted || openPotted) {
-    state_.message = std::string("Player ") +
-                     std::to_string(state_.currentPlayer + 1) + " continues";
+    state_.message =
+        std::to_string(state_.currentPlayer + 1) + "号玩家继续击球";
     return {Phase::Aiming, state_.message};
   }
 
   SwitchTurn();
-  state_.message = std::string("Turn passes to Player ") +
-                   std::to_string(state_.currentPlayer + 1);
+  state_.message =
+      "轮到" + std::to_string(state_.currentPlayer + 1) + "号玩家击球";
   return {Phase::Aiming, state_.message};
 }
 

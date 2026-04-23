@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <vector>
 #ifdef _WIN32
 extern "C" __declspec(dllimport) int __stdcall AllocConsole(void);
 #endif
@@ -36,7 +37,6 @@ struct Game {
   double power = 0.0;
   double tipX = 0.0;
   double tipY = 0.0;
-  double shotClock = 45.0;
   Font font{};
   bool customFont = false;
   bool draggingTitle = false;
@@ -56,7 +56,7 @@ View MakeView(int sw, int sh) {
   const float uiScale = static_cast<float>(
       hb::Clamp(std::min(sw / 1360.0, sh / 820.0), 0.72, 1.55));
   const float margin = 78.0f * uiScale;
-  const float uiReserve = 260.0f * uiScale;
+  const float uiReserve = 285.0f * uiScale;
   const float availableW = static_cast<float>(sw) - margin * 2.0f - uiReserve;
   const float availableH = static_cast<float>(sh) - margin * 2.0f;
   const float tableAspect = static_cast<float>(hb::kTableWidth / hb::kTableHeight);
@@ -81,10 +81,10 @@ Vec2 ScreenToWorld(const View &view, Vector2 p) {
 }
 
 Vec2 RayToTableEdge(Vec2 origin, Vec2 dir) {
-  const double left = -hb::kTableWidth * 0.5;
-  const double right = hb::kTableWidth * 0.5;
-  const double top = -hb::kTableHeight * 0.5;
-  const double bottom = hb::kTableHeight * 0.5;
+  const double left = -hb::kTableWidth * 0.5 + hb::kCushionNoseInset;
+  const double right = hb::kTableWidth * 0.5 - hb::kCushionNoseInset;
+  const double top = -hb::kTableHeight * 0.5 + hb::kCushionNoseInset;
+  const double bottom = hb::kTableHeight * 0.5 - hb::kCushionNoseInset;
   double best = 1e9;
 
   if (std::abs(dir.x) > 1e-8) {
@@ -151,6 +151,56 @@ bool PointInRect(Vector2 p, Rectangle r) {
          p.y <= r.y + r.height;
 }
 
+void AddCodepoint(std::vector<int> &codepoints, int codepoint) {
+  if (std::find(codepoints.begin(), codepoints.end(), codepoint) ==
+      codepoints.end()) {
+    codepoints.push_back(codepoint);
+  }
+}
+
+void AddUtf8Codepoints(std::vector<int> &codepoints, const char *text) {
+  const auto *p = reinterpret_cast<const unsigned char *>(text);
+  while (*p != 0) {
+    int cp = 0;
+    int bytes = 0;
+    if ((*p & 0x80) == 0) {
+      cp = *p;
+      bytes = 1;
+    } else if ((*p & 0xE0) == 0xC0) {
+      cp = *p & 0x1F;
+      bytes = 2;
+    } else if ((*p & 0xF0) == 0xE0) {
+      cp = *p & 0x0F;
+      bytes = 3;
+    } else if ((*p & 0xF8) == 0xF0) {
+      cp = *p & 0x07;
+      bytes = 4;
+    } else {
+      ++p;
+      continue;
+    }
+    for (int i = 1; i < bytes && p[i] != 0; ++i) {
+      cp = (cp << 6) | (p[i] & 0x3F);
+    }
+    AddCodepoint(codepoints, cp);
+    p += bytes;
+  }
+}
+
+std::vector<int> BuildFontCodepoints() {
+  std::vector<int> codepoints;
+  for (int c = 32; c <= 126; ++c) {
+    codepoints.push_back(c);
+  }
+  AddUtf8Codepoints(
+      codepoints,
+      "中式八球双人对战当前目前击球号玩家组未定全色半控制点左右高低还原力度"
+      "重新摆选择或按空格键开始下一局白落袋获得自由首次触错误碰后无且库"
+      "开不合法打进复位方继续赢得本局轮到目标请选择");
+  AddUtf8Codepoints(codepoints, "：，×");
+  return codepoints;
+}
+
 void DrawTextF(Font font, const char *text, Vector2 pos, float size, Color color) {
   Color soft = color;
   soft.a = static_cast<unsigned char>(std::min(255, static_cast<int>(soft.a) * 3 / 4));
@@ -212,19 +262,6 @@ Color ShadeBallPixel(Color base, Vector3 n, float edgeAlpha) {
       static_cast<unsigned char>(hb::Clamp(base.b * shade + 255.0f * highlight * 0.32f, 0.0, 255.0)),
       static_cast<unsigned char>(hb::Clamp(edgeAlpha * 255.0f, 0.0, 255.0))};
   return out;
-}
-
-void DrawBezierQuad(Vector2 start, Vector2 end, Vector2 control, float thick, Color color) {
-  constexpr int segments = 18;
-  Vector2 prev = start;
-  for (int i = 1; i <= segments; ++i) {
-    const float t = static_cast<float>(i) / segments;
-    const float u = 1.0f - t;
-    Vector2 p{u * u * start.x + 2.0f * u * t * control.x + t * t * end.x,
-              u * u * start.y + 2.0f * u * t * control.y + t * t * end.y};
-    DrawLineEx(prev, p, thick, color);
-    prev = p;
-  }
 }
 
 void DrawBall(Font font, const View &view, const Ball &ball) {
@@ -300,89 +337,159 @@ void DrawBall(Font font, const View &view, const Ball &ball) {
   }
 }
 
-void DrawRailSegment(Rectangle r, bool horizontal) {
-  DrawRectangleRec(r, {43, 38, 31, 255});
-  if (horizontal) {
-    DrawLineEx({r.x, r.y + r.height * 0.20f}, {r.x + r.width, r.y + r.height * 0.20f},
-               2.0f, {76, 63, 48, 180});
-    DrawLineEx({r.x, r.y + r.height - 2.0f}, {r.x + r.width, r.y + r.height - 2.0f},
-               2.0f, {20, 22, 20, 180});
-  } else {
-    DrawLineEx({r.x + r.width * 0.20f, r.y}, {r.x + r.width * 0.20f, r.y + r.height},
-               2.0f, {76, 63, 48, 180});
-    DrawLineEx({r.x + r.width - 2.0f, r.y}, {r.x + r.width - 2.0f, r.y + r.height},
-               2.0f, {20, 22, 20, 180});
+Vector2 BezierCubic(Vector2 a, Vector2 b, Vector2 c, Vector2 d, float t) {
+  const float u = 1.0f - t;
+  return {u * u * u * a.x + 3.0f * u * u * t * b.x +
+              3.0f * u * t * t * c.x + t * t * t * d.x,
+          u * u * u * a.y + 3.0f * u * u * t * b.y +
+              3.0f * u * t * t * c.y + t * t * t * d.y};
+}
+
+void AppendBezier(std::vector<Vector2> &points, Vector2 a, Vector2 b,
+                  Vector2 c, Vector2 d) {
+  constexpr int segments = 14;
+  for (int i = 1; i <= segments; ++i) {
+    points.push_back(BezierCubic(a, b, c, d,
+                                 static_cast<float>(i) / segments));
   }
+}
+
+void FillPolygonFan(const std::vector<Vector2> &points, Color color) {
+  if (points.size() < 3) {
+    return;
+  }
+  Vector2 center{};
+  for (Vector2 p : points) {
+    center.x += p.x;
+    center.y += p.y;
+  }
+  center.x /= static_cast<float>(points.size());
+  center.y /= static_cast<float>(points.size());
+  for (size_t i = 0; i < points.size(); ++i) {
+    DrawTriangle(center, points[i], points[(i + 1) % points.size()], color);
+  }
+}
+
+void DrawPolyline(const std::vector<Vector2> &points, float thick,
+                  Color color) {
+  for (size_t i = 1; i < points.size(); ++i) {
+    DrawLineEx(points[i - 1], points[i], thick, color);
+  }
+}
+
+void DrawHorizontalCushion(float x1, float x2, float outerY, float depth,
+                           bool top) {
+  const float curve = depth * 2.1f;
+  if (x2 <= x1 + curve * 2.0f) {
+    return;
+  }
+  const float innerY = outerY + (top ? depth : -depth);
+  const float sy = top ? 1.0f : -1.0f;
+  const Color rubber{26, 73, 59, 255};
+  const Color shadow{8, 19, 16, 225};
+  const Color nose{89, 137, 111, 230};
+
+  std::vector<Vector2> body;
+  body.push_back({x1, outerY});
+  body.push_back({x2, outerY});
+  AppendBezier(body, {x2, outerY}, {x2 - curve * 0.18f, outerY},
+               {x2 - curve * 0.18f, innerY}, {x2 - curve, innerY});
+  body.push_back({x1 + curve, innerY});
+  AppendBezier(body, {x1 + curve, innerY}, {x1 + curve * 0.18f, innerY},
+               {x1 + curve * 0.18f, outerY}, {x1, outerY});
+  FillPolygonFan(body, rubber);
+
+  std::vector<Vector2> noseLine{{x1 + curve, innerY},
+                                {x2 - curve, innerY}};
+  DrawPolyline(noseLine, 2.0f, nose);
+  DrawLineEx({x1 + curve * 0.45f, outerY + sy * depth * 0.22f},
+             {x2 - curve * 0.45f, outerY + sy * depth * 0.22f},
+             1.0f, {130, 171, 143, 80});
+  DrawLineEx({x1 + curve * 0.32f, outerY + sy * depth * 0.88f},
+             {x2 - curve * 0.32f, outerY + sy * depth * 0.88f},
+             1.0f, shadow);
+}
+
+void DrawVerticalCushion(float outerX, float y1, float y2, float depth,
+                         bool left) {
+  const float curve = depth * 2.1f;
+  if (y2 <= y1 + curve * 2.0f) {
+    return;
+  }
+  const float innerX = outerX + (left ? depth : -depth);
+  const float sx = left ? 1.0f : -1.0f;
+  const Color rubber{26, 73, 59, 255};
+  const Color shadow{8, 19, 16, 225};
+  const Color nose{89, 137, 111, 230};
+
+  std::vector<Vector2> body;
+  body.push_back({outerX, y1});
+  body.push_back({outerX, y2});
+  AppendBezier(body, {outerX, y2}, {outerX, y2 - curve * 0.18f},
+               {innerX, y2 - curve * 0.18f}, {innerX, y2 - curve});
+  body.push_back({innerX, y1 + curve});
+  AppendBezier(body, {innerX, y1 + curve}, {innerX, y1 + curve * 0.18f},
+               {outerX, y1 + curve * 0.18f}, {outerX, y1});
+  FillPolygonFan(body, rubber);
+
+  std::vector<Vector2> noseLine{{innerX, y1 + curve},
+                                {innerX, y2 - curve}};
+  DrawPolyline(noseLine, 2.0f, nose);
+  DrawLineEx({outerX + sx * depth * 0.22f, y1 + curve * 0.45f},
+             {outerX + sx * depth * 0.22f, y2 - curve * 0.45f},
+             1.0f, {130, 171, 143, 80});
+  DrawLineEx({outerX + sx * depth * 0.88f, y1 + curve * 0.32f},
+             {outerX + sx * depth * 0.88f, y2 - curve * 0.32f},
+             1.0f, shadow);
 }
 
 void DrawPocketShape(const View &view, int index, Vector2 p) {
   const bool side = index == 1 || index == 4;
   const double mouth = side ? hb::kSidePocketMouth : hb::kCornerPocketMouth;
   const float mouthPx = static_cast<float>(mouth * view.scale);
-  const float pocketR = mouthPx * 0.50f;
-  const float jaw = std::max(5.0f, mouthPx * 0.18f);
-  const float curve = std::max(12.0f, mouthPx * 0.42f);
-  Color hole{0, 0, 0, 255};
-  Color facing{13, 18, 16, 255};
-  Color rubber{24, 31, 27, 255};
+  const float r = std::max(14.0f * view.uiScale, mouthPx * (side ? 0.54f : 0.58f));
+  const Color rim{42, 39, 32, 240};
+  const Color innerRim{6, 8, 7, 255};
 
-  if (side) {
-    const float sy = (index == 1) ? -1.0f : 1.0f;
-    const Vector2 leftJaw{p.x - mouthPx * 0.64f, p.y};
-    const Vector2 rightJaw{p.x + mouthPx * 0.64f, p.y};
-    const Vector2 leftBack{p.x - mouthPx * 0.34f, p.y + sy * curve};
-    const Vector2 rightBack{p.x + mouthPx * 0.34f, p.y + sy * curve};
-    DrawCircleV({p.x, p.y + sy * curve * 0.25f}, pocketR, hole);
-    DrawBezierQuad(leftJaw, leftBack, {p.x - mouthPx * 0.54f, p.y + sy * curve * 0.28f},
-                   jaw, rubber);
-    DrawBezierQuad(rightJaw, rightBack, {p.x + mouthPx * 0.54f, p.y + sy * curve * 0.28f},
-                   jaw, rubber);
-    DrawLineEx(leftJaw, {leftJaw.x - mouthPx * 0.14f, leftJaw.y - sy * mouthPx * 0.06f},
-               jaw, facing);
-    DrawLineEx(rightJaw, {rightJaw.x + mouthPx * 0.14f, rightJaw.y - sy * mouthPx * 0.06f},
-               jaw, facing);
-  } else {
-    const float sx = (index == 0 || index == 3) ? -1.0f : 1.0f;
-    const float sy = (index <= 2) ? -1.0f : 1.0f;
-    const Vector2 jawX{p.x - sx * mouthPx * 0.68f, p.y};
-    const Vector2 jawY{p.x, p.y - sy * mouthPx * 0.68f};
-    const Vector2 back{p.x + sx * curve * 0.36f, p.y + sy * curve * 0.36f};
-    DrawCircleV({p.x + sx * curve * 0.13f, p.y + sy * curve * 0.13f}, pocketR, hole);
-    DrawBezierQuad(jawX, back, {p.x + sx * curve * 0.05f, p.y - sy * mouthPx * 0.38f},
-                   jaw, rubber);
-    DrawBezierQuad(jawY, back, {p.x - sx * mouthPx * 0.38f, p.y + sy * curve * 0.05f},
-                   jaw, rubber);
-    DrawLineEx(jawX, {jawX.x - sx * mouthPx * 0.10f, jawX.y - sy * mouthPx * 0.04f},
-               jaw, facing);
-    DrawLineEx(jawY, {jawY.x - sx * mouthPx * 0.04f, jawY.y - sy * mouthPx * 0.10f},
-               jaw, facing);
-  }
+  DrawCircleV(p, r + 4.0f * view.uiScale, rim);
+  DrawCircleV(p, r + 1.5f * view.uiScale, innerRim);
+  DrawCircleV(p, r, BLACK);
 }
 
 void DrawTable(const View &view) {
-  const float railW = 30.0f * view.uiScale;
-  const float sideGap = static_cast<float>(hb::kSidePocketMouth * view.scale * 1.55f);
-  const float cornerGap = static_cast<float>(hb::kCornerPocketMouth * view.scale * 1.28f);
-  Rectangle rail{view.play.x - railW, view.play.y - railW, view.play.width + railW * 2,
-                 view.play.height + railW * 2};
-  DrawRectangleRounded(rail, 0.035f, 16, {21, 23, 22, 255});
-  DrawRectangleRounded({rail.x + 10.0f * view.uiScale, rail.y + 10.0f * view.uiScale,
-                        rail.width - 20.0f * view.uiScale, rail.height - 20.0f * view.uiScale},
-                       0.028f, 16, {48, 42, 34, 255});
-  DrawRectangleRec(view.play, {35, 87, 74, 255});
+  const float frameW = 16.0f * view.uiScale;
+  const float cushionD = static_cast<float>(hb::kCushionNoseInset * view.scale);
+  const float sideGap =
+      std::max(28.0f * view.uiScale,
+               static_cast<float>(hb::kSidePocketMouth * view.scale * 1.04f));
+  const float cornerGap =
+      std::max(22.0f * view.uiScale,
+               static_cast<float>(hb::kCornerPocketMouth * view.scale * 0.86f));
 
-  const float topInnerY = view.play.y - railW * 0.60f;
-  const float bottomInnerY = view.play.y + view.play.height;
-  const float sideInnerW = railW * 0.60f;
-  DrawRailSegment({view.play.x + cornerGap, topInnerY, view.play.width * 0.5f - sideGap * 0.5f - cornerGap, railW * 0.60f}, true);
-  DrawRailSegment({view.play.x + view.play.width * 0.5f + sideGap * 0.5f, topInnerY,
-                   view.play.width * 0.5f - sideGap * 0.5f - cornerGap, railW * 0.60f}, true);
-  DrawRailSegment({view.play.x + cornerGap, bottomInnerY, view.play.width * 0.5f - sideGap * 0.5f - cornerGap, railW * 0.60f}, true);
-  DrawRailSegment({view.play.x + view.play.width * 0.5f + sideGap * 0.5f, bottomInnerY,
-                   view.play.width * 0.5f - sideGap * 0.5f - cornerGap, railW * 0.60f}, true);
-  DrawRailSegment({view.play.x - sideInnerW, view.play.y + cornerGap, sideInnerW, view.play.height - cornerGap * 2}, false);
-  DrawRailSegment({view.play.x + view.play.width, view.play.y + cornerGap, sideInnerW, view.play.height - cornerGap * 2}, false);
-  DrawRectangleLinesEx(view.play, 1.5f, {123, 145, 129, 120});
+  Rectangle rail{view.play.x - frameW, view.play.y - frameW,
+                 view.play.width + frameW * 2, view.play.height + frameW * 2};
+  DrawRectangleRounded(rail, 0.018f, 12, {17, 19, 18, 255});
+  DrawRectangleRec(view.play, {31, 86, 72, 255});
+
+  const float left = view.play.x;
+  const float right = view.play.x + view.play.width;
+  const float top = view.play.y;
+  const float bottom = view.play.y + view.play.height;
+  const float midX = view.play.x + view.play.width * 0.5f;
+
+  DrawHorizontalCushion(left + cornerGap, midX - sideGap * 0.5f, top,
+                        cushionD, true);
+  DrawHorizontalCushion(midX + sideGap * 0.5f, right - cornerGap, top,
+                        cushionD, true);
+  DrawHorizontalCushion(left + cornerGap, midX - sideGap * 0.5f, bottom,
+                        cushionD, false);
+  DrawHorizontalCushion(midX + sideGap * 0.5f, right - cornerGap, bottom,
+                        cushionD, false);
+  DrawVerticalCushion(left, top + cornerGap, bottom - cornerGap, cushionD,
+                      true);
+  DrawVerticalCushion(right, top + cornerGap, bottom - cornerGap, cushionD,
+                      false);
+  DrawRectangleLinesEx(view.play, 1.0f, {121, 154, 128, 90});
 
   const Vector2 pockets[6] = {
       WorldToScreen(view, {-hb::kTableWidth * 0.5, -hb::kTableHeight * 0.5}),
@@ -393,13 +500,14 @@ void DrawTable(const View &view) {
       WorldToScreen(view, {hb::kTableWidth * 0.5, hb::kTableHeight * 0.5}),
   };
   for (int i = 0; i < 6; ++i) {
-    const Vector2 p = pockets[i];
-    DrawPocketShape(view, i, p);
+    DrawPocketShape(view, i, pockets[i]);
   }
 
   const float spotR = 3.0f;
-  DrawCircleV(WorldToScreen(view, {-hb::kTableWidth * 0.25, 0.0}), spotR, {210, 220, 205, 85});
-  DrawCircleV(WorldToScreen(view, {hb::kTableWidth * 0.25, 0.0}), spotR, {210, 220, 205, 85});
+  DrawCircleV(WorldToScreen(view, {-hb::kTableWidth * 0.25, 0.0}), spotR,
+              {210, 220, 205, 85});
+  DrawCircleV(WorldToScreen(view, {hb::kTableWidth * 0.25, 0.0}), spotR,
+              {210, 220, 205, 85});
 }
 
 void DrawCueAndAim(const Game &game, const View &view) {
@@ -409,9 +517,11 @@ void DrawCueAndAim(const Game &game, const View &view) {
   }
   const Vector2 cue = WorldToScreen(view, game.world.CueBall().pos);
   const Vec2 aim = hb::Normalize(game.aim);
-  const Vector2 aimEnd = WorldToScreen(view, RayToTableEdge(game.world.CueBall().pos, aim));
   Vec2 ghostPos{};
   const bool hasGhost = FirstAimTarget(game.world, game.world.CueBall().pos, aim, &ghostPos) > 0;
+  const Vec2 aimStop =
+      hasGhost ? ghostPos : RayToTableEdge(game.world.CueBall().pos, aim);
+  const Vector2 aimEnd = WorldToScreen(view, aimStop);
   const Vector2 dir{static_cast<float>(aim.x), static_cast<float>(aim.y)};
   const float ballR = static_cast<float>(hb::kBallRadius * view.scale);
   const float retreat = static_cast<float>(22.0 + game.power * 118.0);
@@ -425,9 +535,7 @@ void DrawCueAndAim(const Game &game, const View &view) {
     const Vector2 ghost = WorldToScreen(view, ghostPos);
     const float ghostR = static_cast<float>(hb::kBallRadius * view.scale);
     DrawCircleLines(static_cast<int>(ghost.x), static_cast<int>(ghost.y), ghostR,
-                    {235, 239, 226, 180});
-    DrawCircleLines(static_cast<int>(ghost.x), static_cast<int>(ghost.y), ghostR + 1.8f,
-                    {15, 17, 16, 180});
+                    {236, 241, 228, 205});
   }
   DrawLineEx(butt, tip, 5.0f, {178, 132, 78, 255});
   DrawLineEx(butt, tip, 1.5f, {236, 219, 174, 255});
@@ -444,28 +552,42 @@ Rectangle Button(Font font, Rectangle r, const char *text, bool active) {
   return r;
 }
 
+void DrawTopStatus(Game &game) {
+  const float s = static_cast<float>(
+      hb::Clamp(std::min(GetScreenWidth() / 1360.0, GetScreenHeight() / 820.0),
+                0.72, 1.55));
+  const auto &rs = game.rules.State();
+  char line[192]{};
+  std::snprintf(line, sizeof(line), "目前击球：%d号玩家    击打：%s",
+                rs.currentPlayer + 1,
+                hb::GroupName(rs.players[rs.currentPlayer].group));
+  const float fs = 22.0f * s;
+  const Vector2 sz = MeasureTextEx(game.font, line, fs, 0.0f);
+  const Vector2 pos{(GetScreenWidth() - sz.x) * 0.5f, 47.0f * s};
+  DrawTextF(game.font, line, pos, fs, {230, 234, 224, 235});
+  DrawLineEx({pos.x, pos.y + sz.y + 3.0f * s},
+             {pos.x + sz.x, pos.y + sz.y + 3.0f * s},
+             1.0f, {93, 112, 101, 130});
+}
+
 void DrawUI(Game &game) {
   const float s = static_cast<float>(
       hb::Clamp(std::min(GetScreenWidth() / 1360.0, GetScreenHeight() / 820.0),
                 0.72, 1.55));
   const int sw = GetScreenWidth();
-  Rectangle panel{static_cast<float>(sw) - 240.0f * s, 34.0f, 205.0f * s, 372.0f * s};
+  Rectangle panel{static_cast<float>(sw) - 248.0f * s, 46.0f * s,
+                  214.0f * s, 332.0f * s};
   DrawRectangleRounded(panel, 0.045f, 12, {12, 13, 14, 232});
   DrawRectangleRoundedLines(panel, 0.045f, 12, {91, 101, 98, 140});
 
   const auto &rs = game.rules.State();
-  char line[128]{};
-  std::snprintf(line, sizeof(line), "Player %d", rs.currentPlayer + 1);
-  DrawTextF(game.font, line, {panel.x + 18 * s, panel.y + 18 * s}, 24 * s, {236, 238, 228, 255});
-  std::snprintf(line, sizeof(line), "Group: %s", hb::GroupName(rs.players[rs.currentPlayer].group));
-  DrawTextF(game.font, line, {panel.x + 18 * s, panel.y + 50 * s}, 17 * s, {183, 192, 184, 255});
-  std::snprintf(line, sizeof(line), "Clock: %02d", static_cast<int>(std::ceil(game.shotClock)));
-  DrawTextF(game.font, line, {panel.x + 18 * s, panel.y + 78 * s}, 20 * s,
-            game.shotClock < 8.0 ? Color{226, 112, 96, 255} : Color{210, 216, 206, 255});
+  DrawTextF(game.font, "击球控制", {panel.x + 18 * s, panel.y + 18 * s}, 23 * s,
+            {236, 238, 228, 255});
 
-  DrawTextF(game.font, "Tip", {panel.x + 18 * s, panel.y + 116 * s}, 18 * s, {188, 196, 188, 255});
-  const Vector2 center{panel.x + 102 * s, panel.y + 194 * s};
-  const float padR = 58.0f * s;
+  DrawTextF(game.font, "击点", {panel.x + 18 * s, panel.y + 58 * s}, 18 * s,
+            {188, 196, 188, 255});
+  const Vector2 center{panel.x + 107 * s, panel.y + 135 * s};
+  const float padR = 54.0f * s;
   DrawCircleV(center, padR, {25, 29, 29, 255});
   DrawCircleLines(static_cast<int>(center.x), static_cast<int>(center.y), padR, {113, 128, 121, 180});
   DrawLineEx({center.x - padR, center.y}, {center.x + padR, center.y}, 1.0f, {110, 119, 115, 125});
@@ -473,20 +595,28 @@ void DrawUI(Game &game) {
   DrawCircleV({center.x + static_cast<float>(game.tipX * padR),
                center.y - static_cast<float>(game.tipY * padR)},
               7.0f, {228, 232, 218, 255});
-  DrawTextF(game.font, "L", {center.x - padR - 16 * s, center.y - 9 * s}, 15 * s, {150, 159, 152, 255});
-  DrawTextF(game.font, "R", {center.x + padR + 8 * s, center.y - 9 * s}, 15 * s, {150, 159, 152, 255});
-  DrawTextF(game.font, "H", {center.x - 5 * s, center.y - padR - 22 * s}, 15 * s, {150, 159, 152, 255});
-  DrawTextF(game.font, "L", {center.x - 5 * s, center.y + padR + 6 * s}, 15 * s, {150, 159, 152, 255});
+  DrawTextF(game.font, "左", {center.x - padR - 20 * s, center.y - 9 * s}, 15 * s,
+            {150, 159, 152, 255});
+  DrawTextF(game.font, "右", {center.x + padR + 8 * s, center.y - 9 * s}, 15 * s,
+            {150, 159, 152, 255});
+  DrawTextF(game.font, "高", {center.x - 8 * s, center.y - padR - 23 * s}, 15 * s,
+            {150, 159, 152, 255});
+  DrawTextF(game.font, "低", {center.x - 8 * s, center.y + padR + 7 * s}, 15 * s,
+            {150, 159, 152, 255});
+
+  Button(game.font, {panel.x + 18 * s, panel.y + 205 * s, 178 * s, 28 * s},
+         "还原", true);
 
   char powerText[64]{};
-  std::snprintf(powerText, sizeof(powerText), "Power %3d%%", static_cast<int>(game.power * 100.0));
-  DrawTextF(game.font, powerText, {panel.x + 18 * s, panel.y + 275 * s}, 18 * s, {213, 218, 209, 255});
-  DrawRectangleRounded({panel.x + 18 * s, panel.y + 304 * s, 169 * s, 12 * s}, 0.4f, 8, {28, 31, 31, 255});
-  DrawRectangleRounded({panel.x + 18 * s, panel.y + 304 * s, static_cast<float>(169.0 * game.power * s), 12 * s},
+  std::snprintf(powerText, sizeof(powerText), "力度 %3d%%", static_cast<int>(game.power * 100.0));
+  DrawTextF(game.font, powerText, {panel.x + 18 * s, panel.y + 250 * s}, 18 * s,
+            {213, 218, 209, 255});
+  DrawRectangleRounded({panel.x + 18 * s, panel.y + 278 * s, 178 * s, 12 * s}, 0.4f, 8, {28, 31, 31, 255});
+  DrawRectangleRounded({panel.x + 18 * s, panel.y + 278 * s, static_cast<float>(178.0 * game.power * s), 12 * s},
                        0.4f, 8, {143, 170, 151, 255});
 
-  Button(game.font, {panel.x + 18 * s, panel.y + 334 * s, 80 * s, 28 * s}, "Ext", !rs.players[rs.currentPlayer].extensionUsed);
-  Button(game.font, {panel.x + 107 * s, panel.y + 334 * s, 80 * s, 28 * s}, "Rack", true);
+  Button(game.font, {panel.x + 18 * s, panel.y + 304 * s, 178 * s, 28 * s},
+         "重新摆球", true);
 
   Rectangle msg{48.0f * s, static_cast<float>(GetScreenHeight()) - 58.0f * s,
                 static_cast<float>(GetScreenWidth()) - 96.0f * s, 34.0f * s};
@@ -498,9 +628,9 @@ void DrawUI(Game &game) {
                     static_cast<float>(GetScreenHeight()) * 0.5f - 62.0f, 340.0f, 124.0f};
     DrawRectangleRounded(modal, 0.04f, 12, {13, 15, 15, 245});
     DrawRectangleRoundedLines(modal, 0.04f, 12, {130, 142, 136, 190});
-    DrawTextF(game.font, "Choose group", {modal.x + 92, modal.y + 20}, 22, {236, 238, 228, 255});
-    Button(game.font, {modal.x + 34, modal.y + 70, 126, 32}, "Solids", true);
-    Button(game.font, {modal.x + 180, modal.y + 70, 126, 32}, "Stripes", true);
+    DrawTextF(game.font, "选择球组", {modal.x + 114, modal.y + 20}, 22, {236, 238, 228, 255});
+    Button(game.font, {modal.x + 34, modal.y + 70, 126, 32}, "全色球", true);
+    Button(game.font, {modal.x + 180, modal.y + 70, 126, 32}, "半色球", true);
   }
 }
 
@@ -520,12 +650,12 @@ void DrawTitleBar(Game &game) {
   Rectangle bar{0.0f, 0.0f, w, 34.0f};
   DrawRectangleRec(bar, BLACK);
   DrawRectangle(0, 33, GetScreenWidth(), 1, {50, 57, 55, 120});
-  DrawTextF(game.font, "HEYBALL", {18.0f, 7.0f}, 18.0f, {207, 214, 207, 220});
-  DrawTextF(game.font, "Chinese Eight Ball", {112.0f, 8.0f}, 16.0f,
+  DrawTextF(game.font, "中式八球", {18.0f, 7.0f}, 18.0f, {207, 214, 207, 220});
+  DrawTextF(game.font, "双人对战", {100.0f, 8.0f}, 16.0f,
             {117, 128, 122, 210});
   const Rectangle minR = TitleButton(w - 86.0f, "-", game.font,
                                      PointInRect(mouse, {w - 86.0f, 0.0f, 42.0f, 34.0f}));
-  const Rectangle closeR = TitleButton(w - 43.0f, "x", game.font,
+  const Rectangle closeR = TitleButton(w - 43.0f, "×", game.font,
                                        PointInRect(mouse, {w - 43.0f, 0.0f, 42.0f, 34.0f}));
   (void)minR;
   (void)closeR;
@@ -629,26 +759,25 @@ void HandleUiInput(Game &game) {
                 0.72, 1.55));
   const Vector2 mouse = GetMousePosition();
   const int sw = GetScreenWidth();
-  Rectangle panel{static_cast<float>(sw) - 240.0f * s, 34.0f, 205.0f * s, 372.0f * s};
-  const Vector2 tipCenter{panel.x + 102 * s, panel.y + 194 * s};
-  const float tipR = 58.0f * s;
+  Rectangle panel{static_cast<float>(sw) - 248.0f * s, 46.0f * s,
+                  214.0f * s, 332.0f * s};
+  const Vector2 tipCenter{panel.x + 107 * s, panel.y + 135 * s};
+  const float tipR = 54.0f * s;
 
   if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
     if (Vector2Distance(mouse, tipCenter) <= tipR) {
       game.tipX = hb::Clamp((mouse.x - tipCenter.x) / tipR, -1.0, 1.0);
       game.tipY = hb::Clamp(-(mouse.y - tipCenter.y) / tipR, -1.0, 1.0);
     }
-    if (PointInRect(mouse, {panel.x + 18 * s, panel.y + 334 * s, 80 * s, 28 * s}) &&
-        !game.rules.State().players[game.rules.State().currentPlayer].extensionUsed) {
-      game.rules.State().players[game.rules.State().currentPlayer].extensionUsed = true;
-      game.shotClock += 30.0;
+    if (PointInRect(mouse, {panel.x + 18 * s, panel.y + 205 * s, 178 * s, 28 * s})) {
+      game.tipX = 0.0;
+      game.tipY = 0.0;
     }
-    if (PointInRect(mouse, {panel.x + 107 * s, panel.y + 334 * s, 80 * s, 28 * s})) {
+    if (PointInRect(mouse, {panel.x + 18 * s, panel.y + 304 * s, 178 * s, 28 * s})) {
       game.world.ResetRack();
       game.rules.ResetRack(1 - game.rules.State().currentPlayer);
       game.phase = Phase::Aiming;
       game.power = 0.0;
-      game.shotClock = 45.0;
     }
     if (game.phase == Phase::GroupChoice) {
       Rectangle modal{static_cast<float>(GetScreenWidth()) * 0.5f - 170.0f,
@@ -669,14 +798,6 @@ void UpdateGame(Game &game, const View &view) {
   HandleUiInput(game);
   const float dt = GetFrameTime();
 
-  if (game.phase == Phase::Aiming || game.phase == Phase::BallInHand) {
-    game.shotClock -= dt;
-    if (game.shotClock <= 0.0) {
-      game.phase = game.rules.ForceFoul("Shot clock foul").nextPhase;
-      game.shotClock = 45.0;
-    }
-  }
-
   if (game.phase == Phase::Aiming && !game.world.CueBall().pocketed &&
       !game.world.CueBall().sinking) {
     const Vec2 mouseWorld = ScreenToWorld(view, GetMousePosition());
@@ -690,7 +811,6 @@ void UpdateGame(Game &game, const View &view) {
       game.world.StrikeCue(shot);
       game.phase = Phase::Moving;
       game.power = 0.0;
-      game.shotClock = 45.0;
     }
   } else if (game.phase == Phase::BallInHand) {
     Vec2 pos = ScreenToWorld(view, GetMousePosition());
@@ -699,7 +819,6 @@ void UpdateGame(Game &game, const View &view) {
       if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
         game.rules.State().ballInHand = false;
         game.phase = Phase::Aiming;
-        game.shotClock = 45.0;
       }
     }
   } else if (game.phase == Phase::Moving) {
@@ -710,14 +829,12 @@ void UpdateGame(Game &game, const View &view) {
       if (game.phase == Phase::BallInHand) {
         game.world.PlaceCue({-hb::kTableWidth * 0.30, 0.0});
       }
-      game.shotClock = 45.0;
     }
   } else if (game.phase == Phase::RackOver && IsKeyPressed(KEY_SPACE)) {
     const int nextBreaker = game.rules.State().winner >= 0 ? game.rules.State().winner : 0;
     game.world.ResetRack();
     game.rules.ResetRack(nextBreaker);
     game.phase = Phase::Aiming;
-    game.shotClock = 45.0;
   }
 
   if (IsKeyPressed(KEY_C)) {
@@ -729,6 +846,7 @@ void UpdateGame(Game &game, const View &view) {
 void DrawGame(Game &game, const View &view) {
   ClearBackground(BLACK);
   DrawTitleBar(game);
+  DrawTopStatus(game);
   DrawTable(view);
   for (const Ball &ball : game.world.Balls()) {
     DrawBall(game.font, view, ball);
@@ -749,7 +867,7 @@ void DrawGame(Game &game, const View &view) {
     DrawRectangleRoundedLines(r, 0.05f, 12, {128, 142, 134, 170});
     DrawTextF(game.font, game.rules.State().message.c_str(), {r.x + 42, r.y + 20}, 24,
               {236, 238, 228, 255});
-    DrawTextF(game.font, "Press Space for next rack", {r.x + 70, r.y + 54}, 18,
+    DrawTextF(game.font, "按空格键开始下一局", {r.x + 74, r.y + 54}, 18,
               {180, 190, 182, 255});
   }
 }
@@ -778,12 +896,14 @@ void EnableDebugConsoleIfRequested(int argc, char **argv) {
 int main(int argc, char **argv) {
   EnableDebugConsoleIfRequested(argc, argv);
   SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_UNDECORATED);
-  InitWindow(1360, 820, "Heyball - Chinese Eight Ball");
+  InitWindow(1360, 820, "中式八球");
   SetWindowMinSize(960, 600);
   SetTargetFPS(240);
 
   Game game;
-  game.font = LoadFontEx("C:/Windows/Fonts/Dengb.ttf", 96, nullptr, 0);
+  std::vector<int> codepoints = BuildFontCodepoints();
+  game.font = LoadFontEx("C:/Windows/Fonts/Dengb.ttf", 96, codepoints.data(),
+                         static_cast<int>(codepoints.size()));
   game.customFont = game.font.texture.id != 0;
   if (game.customFont) {
     SetTextureFilter(game.font.texture, TEXTURE_FILTER_BILINEAR);
