@@ -1,0 +1,6 @@
+D:/8-pool/build/ucrt64-debug/CMakeFiles/heyball_core.dir
+D:/8-pool/build/ucrt64-debug/CMakeFiles/heyball.dir
+D:/8-pool/build/ucrt64-debug/CMakeFiles/heyball_tests.dir
+D:/8-pool/build/ucrt64-debug/CMakeFiles/test.dir
+D:/8-pool/build/ucrt64-debug/CMakeFiles/edit_cache.dir
+D:/8-pool/build/ucrt64-debug/CMakeFiles/rebuild_cache.dir

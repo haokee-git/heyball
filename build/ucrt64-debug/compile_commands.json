@@ -1,0 +1,20 @@
+[
+{
+  "directory": "D:/8-pool/build/ucrt64-debug",
+  "command": "D:\\msys64\\ucrt64\\bin\\g++.exe -ID:\\8-pool\\src -Wall -Wextra -Wpedantic -o CMakeFiles\\heyball_core.dir\\src\\core.cpp.obj -c D:\\8-pool\\src\\core.cpp",
+  "file": "D:/8-pool/src/core.cpp",
+  "output": "D:/8-pool/build/ucrt64-debug/CMakeFiles/heyball_core.dir/src/core.cpp.obj"
+},
+{
+  "directory": "D:/8-pool/build/ucrt64-debug",
+  "command": "D:\\msys64\\ucrt64\\bin\\g++.exe -ID:\\msys64\\ucrt64\\include -ID:\\8-pool\\src -Wall -Wextra -Wpedantic -o CMakeFiles\\heyball.dir\\src\\main.cpp.obj -c D:\\8-pool\\src\\main.cpp",
+  "file": "D:/8-pool/src/main.cpp",
+  "output": "D:/8-pool/build/ucrt64-debug/CMakeFiles/heyball.dir/src/main.cpp.obj"
+},
+{
+  "directory": "D:/8-pool/build/ucrt64-debug",
+  "command": "D:\\msys64\\ucrt64\\bin\\g++.exe -ID:\\8-pool\\src -Wall -Wextra -Wpedantic -o CMakeFiles\\heyball_tests.dir\\tests\\test_runner.cpp.obj -c D:\\8-pool\\tests\\test_runner.cpp",
+  "file": "D:/8-pool/tests/test_runner.cpp",
+  "output": "D:/8-pool/build/ucrt64-debug/CMakeFiles/heyball_tests.dir/tests/test_runner.cpp.obj"
+}
+]

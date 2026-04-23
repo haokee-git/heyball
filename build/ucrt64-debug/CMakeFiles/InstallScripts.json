@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"D:/8-pool/build/ucrt64-debug/cmake_install.cmake"
+	],
+	"Parallel" : false
+}
