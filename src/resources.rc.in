@@ -1,0 +1,3 @@
+#include "@CMAKE_CURRENT_SOURCE_DIR@/src/resource.h"
+
+IDR_PINGFANG_SC RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/assets/PingFangSC.otf"

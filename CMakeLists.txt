@@ -7,9 +7,10 @@ if(WIN32)
   list(REMOVE_DUPLICATES _HEYBALL_PATH)
   cmake_path(CONVERT "${_HEYBALL_PATH}" TO_NATIVE_PATH_LIST _HEYBALL_NATIVE_PATH)
   set(ENV{PATH} "${_HEYBALL_NATIVE_PATH}")
+  set(CMAKE_RC_COMPILER "${MSYS2_UCRT64}/bin/windres.exe" CACHE FILEPATH "MSYS2 windres")
 endif()
 
-project(HeyballRaylib LANGUAGES CXX)
+project(HeyballRaylib LANGUAGES CXX RC)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -26,6 +27,13 @@ set(UCRT64_RULE_LAUNCHER "${CMAKE_CURRENT_SOURCE_DIR}/tools/ucrt64-env.cmd")
 set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE "${UCRT64_RULE_LAUNCHER}")
 set_property(GLOBAL PROPERTY RULE_LAUNCH_LINK "${UCRT64_RULE_LAUNCHER}")
 
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
+configure_file(
+  src/resources.rc.in
+  "${CMAKE_CURRENT_BINARY_DIR}/generated/resources.rc"
+  @ONLY
+)
+
 add_library(heyball_core
   src/core.cpp
 )
@@ -34,6 +42,7 @@ target_compile_options(heyball_core PRIVATE -Wall -Wextra -Wpedantic)
 
 add_executable(heyball
   src/main.cpp
+  "${CMAKE_CURRENT_BINARY_DIR}/generated/resources.rc"
 )
 if(WIN32)
   set_target_properties(heyball PROPERTIES WIN32_EXECUTABLE TRUE)

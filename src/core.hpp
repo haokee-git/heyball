@@ -59,6 +59,9 @@ struct Ball {
   double sideOmega = 0.0;
   double rollAngle = 0.0;
   Vec2 decal{};
+  std::array<double, 9> orientation{{1.0, 0.0, 0.0,
+                                     0.0, 1.0, 0.0,
+                                     0.0, 0.0, 1.0}};
   Vec2 sinkTarget{};
   bool sinking = false;
   bool pocketed = false;

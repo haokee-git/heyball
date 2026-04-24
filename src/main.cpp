@@ -4,13 +4,20 @@
 #include <raymath.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstdint>
 #include <cstring>
 #include <string>
 #include <vector>
 #ifdef _WIN32
 extern "C" __declspec(dllimport) int __stdcall AllocConsole(void);
+extern "C" __declspec(dllimport) void *__stdcall GetModuleHandleA(const char *);
+extern "C" __declspec(dllimport) void *__stdcall FindResourceA(void *, const char *, const char *);
+extern "C" __declspec(dllimport) void *__stdcall LoadResource(void *, void *);
+extern "C" __declspec(dllimport) unsigned long __stdcall SizeofResource(void *, void *);
+extern "C" __declspec(dllimport) void *__stdcall LockResource(void *);
 #endif
 
 namespace {
@@ -21,6 +28,10 @@ using hb::Phase;
 using hb::ShotEvents;
 using hb::ShotParams;
 using hb::Vec2;
+
+constexpr int kPingFangResourceId = 101;
+constexpr int kWinResourceTypeRCDATA = 10;
+constexpr int kUiFontSize = 40;
 
 struct View {
   Rectangle play{};
@@ -201,11 +212,61 @@ std::vector<int> BuildFontCodepoints() {
   return codepoints;
 }
 
+const char *ResourceId(int id) {
+  return reinterpret_cast<const char *>(
+      static_cast<std::uintptr_t>(static_cast<unsigned short>(id)));
+}
+
+Font LoadPingFangFont(std::vector<int> &codepoints) {
+#ifdef _WIN32
+  void *module = GetModuleHandleA(nullptr);
+  if (module) {
+    void *resource =
+        FindResourceA(module, ResourceId(kPingFangResourceId),
+                      ResourceId(kWinResourceTypeRCDATA));
+    if (resource) {
+      const unsigned long size = SizeofResource(module, resource);
+      void *handle = LoadResource(module, resource);
+      const auto *data = static_cast<const unsigned char *>(LockResource(handle));
+      if (data && size > 0 && size <= 0x7fffffffUL) {
+        Font font = LoadFontFromMemory(".otf", data, static_cast<int>(size),
+                                       kUiFontSize, codepoints.data(),
+                                       static_cast<int>(codepoints.size()));
+        if (font.texture.id != 0) {
+          return font;
+        }
+      }
+    }
+  }
+#endif
+  return LoadFontEx("assets/PingFangSC.otf", kUiFontSize, codepoints.data(),
+                    static_cast<int>(codepoints.size()));
+}
+
+void ConfigureFontTexture(Font &font) {
+  if (font.texture.id == 0) {
+    return;
+  }
+  SetTextureFilter(font.texture, TEXTURE_FILTER_BILINEAR);
+}
+
 void DrawTextF(Font font, const char *text, Vector2 pos, float size, Color color) {
-  Color soft = color;
-  soft.a = static_cast<unsigned char>(std::min(255, static_cast<int>(soft.a) * 3 / 4));
-  DrawTextEx(font, text, {pos.x + 0.55f, pos.y}, size, 0.25f, soft);
-  DrawTextEx(font, text, pos, size, 0.25f, color);
+  const Vector2 p{std::round(pos.x), std::round(pos.y)};
+  const float fs = std::max(1.0f, std::round(size));
+  DrawTextEx(font, text, {p.x + 1.0f, p.y + 1.0f}, fs, 0.0f,
+             {0, 0, 0,
+              static_cast<unsigned char>(std::min(180, static_cast<int>(color.a) * 3 / 5))});
+  DrawTextEx(font, text, p, fs, 0.0f, color);
+}
+
+void DrawRoundedFillWithBorder(Rectangle r, float roundness, int segments,
+                               Color fill, Color border) {
+  Rectangle px{std::round(r.x), std::round(r.y), std::round(r.width),
+               std::round(r.height)};
+  DrawRectangleRounded(px, roundness, segments, border);
+  const Rectangle inner{px.x + 1.0f, px.y + 1.0f, px.width - 2.0f,
+                        px.height - 2.0f};
+  DrawRectangleRounded(inner, roundness, segments, fill);
 }
 
 Color BallColor(int n) {
@@ -238,16 +299,57 @@ Color BallColor(int n) {
   }
 }
 
-Vector3 RotateX(Vector3 v, float a) {
-  const float c = std::cos(a);
-  const float s = std::sin(a);
-  return {v.x, v.y * c - v.z * s, v.y * s + v.z * c};
+Color MixColor(Color a, Color b, float t) {
+  t = static_cast<float>(hb::Clamp(t, 0.0, 1.0));
+  return {
+      static_cast<unsigned char>(a.r * (1.0f - t) + b.r * t),
+      static_cast<unsigned char>(a.g * (1.0f - t) + b.g * t),
+      static_cast<unsigned char>(a.b * (1.0f - t) + b.b * t),
+      static_cast<unsigned char>(a.a * (1.0f - t) + b.a * t)};
 }
 
-Vector3 RotateY(Vector3 v, float a) {
-  const float c = std::cos(a);
-  const float s = std::sin(a);
-  return {v.x * c + v.z * s, v.y, -v.x * s + v.z * c};
+Vector3 BallLocalFromWorld(const Ball &ball, Vector3 world) {
+  const auto &m = ball.orientation;
+  return {static_cast<float>(world.x * m[0] + world.y * m[3] + world.z * m[6]),
+          static_cast<float>(world.x * m[1] + world.y * m[4] + world.z * m[7]),
+          static_cast<float>(world.x * m[2] + world.y * m[5] + world.z * m[8])};
+}
+
+Vector3 BallWorldFromLocal(const Ball &ball, Vector3 local) {
+  const auto &m = ball.orientation;
+  return {static_cast<float>(local.x * m[0] + local.y * m[1] + local.z * m[2]),
+          static_cast<float>(local.x * m[3] + local.y * m[4] + local.z * m[5]),
+          static_cast<float>(local.x * m[6] + local.y * m[7] + local.z * m[8])};
+}
+
+std::array<Vector3, 6> NumberSpotLocals() {
+  return {{{0.0f, 0.0f, 1.0f},
+           {0.0f, 0.0f, -1.0f},
+           {1.0f, 0.0f, 0.0f},
+           {-1.0f, 0.0f, 0.0f},
+           {0.0f, 1.0f, 0.0f},
+           {0.0f, -1.0f, 0.0f}}};
+}
+
+struct NumberSpot {
+  Vector3 local{};
+  Vector3 world{};
+  float visibility = 0.0f;
+};
+
+NumberSpot BestNumberSpot(const Ball &ball, bool stripe) {
+  const auto spots = NumberSpotLocals();
+  const int count = stripe ? 4 : 6;
+  NumberSpot best{};
+  best.world.z = -1.0f;
+  for (int i = 0; i < count; ++i) {
+    const Vector3 world = BallWorldFromLocal(ball, spots[i]);
+    if (world.z > best.world.z) {
+      best = {spots[i], world,
+              static_cast<float>(hb::Clamp((world.z - 0.08f) / 0.82f, 0.0, 1.0))};
+    }
+  }
+  return best;
 }
 
 Color ShadeBallPixel(Color base, Vector3 n, float edgeAlpha) {
@@ -282,6 +384,15 @@ void DrawBall(Font font, const View &view, const Ball &ball) {
   const bool stripe = hb::IsStripe(ball.number);
   const Color base = BallColor(ball.number);
   const Color ivory{246, 243, 226, 255};
+  const auto numberSpots = NumberSpotLocals();
+  const int numberSpotCount = stripe ? 4 : 6;
+  const float plaqueAngle = stripe ? 0.305f : 0.345f;
+  const float plaqueCos = std::cos(plaqueAngle);
+  const float plaqueFeather = 0.030f;
+  std::array<bool, 6> numberSpotVisible{};
+  for (int i = 0; i < numberSpotCount; ++i) {
+    numberSpotVisible[i] = BallWorldFromLocal(ball, numberSpots[i]).z > 0.02f;
+  }
   const int minX = static_cast<int>(std::floor(c.x - r - 1.0f));
   const int maxX = static_cast<int>(std::ceil(c.x + r + 1.0f));
   const int minY = static_cast<int>(std::floor(c.y - r - 1.0f));
@@ -296,21 +407,30 @@ void DrawBall(Font font, const View &view, const Ball &ball) {
       }
       const float nz = std::sqrt(std::max(0.0f, 1.0f - d2));
       Vector3 normal{nx, ny, nz};
-      Vector3 local = RotateY(RotateX(normal, static_cast<float>(ball.decal.y) * 0.65f),
-                              -static_cast<float>(ball.decal.x) * 0.65f);
+      Vector3 local = BallLocalFromWorld(ball, normal);
       Color material = ball.number == 0 ? ivory : base;
       if (stripe) {
-        const float stripeWidth = 0.40f;
-        const float feather = 0.045f;
+        const float stripeWidth = 0.43f;
+        const float feather = 0.055f;
         const float band = std::abs(local.y);
         if (band > stripeWidth + feather) {
           material = ivory;
         } else if (band > stripeWidth) {
           const float t = (band - stripeWidth) / feather;
-          material = {
-              static_cast<unsigned char>(base.r * (1.0f - t) + ivory.r * t),
-              static_cast<unsigned char>(base.g * (1.0f - t) + ivory.g * t),
-              static_cast<unsigned char>(base.b * (1.0f - t) + ivory.b * t), 255};
+          material = MixColor(base, ivory, t);
+        }
+      }
+      if (ball.number > 0) {
+        for (int i = 0; i < numberSpotCount; ++i) {
+          if (!numberSpotVisible[i]) {
+            continue;
+          }
+          const float d = Vector3DotProduct(local, numberSpots[i]);
+          if (d < plaqueCos - plaqueFeather) {
+            continue;
+          }
+          const float t = (d - (plaqueCos - plaqueFeather)) / plaqueFeather;
+          material = MixColor(material, ivory, t);
         }
       }
       const float edgeAlpha = d2 > 0.90f ? (1.0f - d2) / 0.10f : 1.0f;
@@ -325,27 +445,29 @@ void DrawBall(Font font, const View &view, const Ball &ball) {
                   {25, 25, 25, static_cast<unsigned char>(150 * visualAlpha)});
 
   if (ball.number > 0) {
-    const float sx = static_cast<float>(std::sin(ball.decal.x));
-    const float sy = static_cast<float>(std::sin(ball.decal.y));
-    const float cx = static_cast<float>(std::cos(ball.decal.x));
-    const float cy = static_cast<float>(std::cos(ball.decal.y));
-    const float normalZ = cx * cy;
-    const float visibility = std::max(0.0f, std::min(1.0f, normalZ * 0.85f + 0.25f));
-    const float decalR = r * (0.30f + 0.14f * visibility);
-    const Vector2 d{c.x + sx * r * 0.47f, c.y - sy * r * 0.47f};
-    DrawCircleV(d, decalR,
-                {244, 241, 224,
-                 static_cast<unsigned char>(245 * visibility * visualAlpha)});
+    const NumberSpot spot = BestNumberSpot(ball, stripe);
+    if (spot.visibility <= 0.08f) {
+      return;
+    }
+    const Vector2 d{c.x + spot.world.x * r, c.y + spot.world.y * r};
+    Vector3 tangentLocal =
+        Vector3CrossProduct({0.0f, 1.0f, 0.0f}, spot.local);
+    if (Vector3Length(tangentLocal) < 0.01f) {
+      tangentLocal = Vector3CrossProduct({1.0f, 0.0f, 0.0f}, spot.local);
+    }
+    tangentLocal = Vector3Normalize(tangentLocal);
+    const Vector3 tangentWorld = BallWorldFromLocal(ball, tangentLocal);
+    const float rotation =
+        std::atan2(tangentWorld.y, tangentWorld.x) * 57.2957795f;
     char label[4]{};
     std::snprintf(label, sizeof(label), "%d", ball.number);
-    const float fs = (ball.number >= 10 ? r * 0.54f : r * 0.66f) * (0.76f + 0.24f * visibility);
+    const float fs = (ball.number >= 10 ? r * 0.39f : r * 0.48f) *
+                     (0.70f + 0.30f * spot.visibility);
     const Vector2 sz = MeasureTextEx(font, label, fs, 0.0f);
-    const float rotation =
-        static_cast<float>(std::fmod((ball.decal.x - ball.decal.y) * 42.0, 360.0));
     DrawTextPro(font, label, {d.x, d.y}, {sz.x * 0.5f, sz.y * 0.5f}, rotation, fs,
                 0.0f,
                 {15, 15, 15,
-                 static_cast<unsigned char>(255 * visibility * visualAlpha)});
+                 static_cast<unsigned char>(255 * spot.visibility * visualAlpha)});
   }
 }
 
@@ -557,9 +679,10 @@ void DrawCueAndAim(const Game &game, const View &view) {
 }
 
 Rectangle Button(Font font, Rectangle r, const char *text, bool active) {
-  DrawRectangleRounded(r, 0.12f, 8, active ? Color{59, 79, 73, 255} : Color{27, 30, 31, 255});
-  DrawRectangleRoundedLines(r, 0.12f, 8, active ? Color{141, 166, 151, 180} : Color{91, 98, 96, 140});
-  const float fs = std::max(12.0f, std::min(18.0f, r.height * 0.64f));
+  DrawRoundedFillWithBorder(
+      r, 0.12f, 8, active ? Color{57, 79, 72, 255} : Color{27, 30, 31, 255},
+      active ? Color{88, 111, 101, 230} : Color{58, 66, 63, 210});
+  const float fs = std::max(15.0f, std::min(22.0f, r.height * 0.72f));
   const Vector2 sz = MeasureTextEx(font, text, fs, 0.0f);
   DrawTextF(font, text, {r.x + (r.width - sz.x) * 0.5f, r.y + (r.height - sz.y) * 0.5f}, fs,
             {222, 224, 215, 255});
@@ -575,10 +698,10 @@ void DrawTopStatus(Game &game) {
   std::snprintf(line, sizeof(line), "目前击球：%d号玩家    击打：%s",
                 rs.currentPlayer + 1,
                 hb::GroupName(rs.players[rs.currentPlayer].group));
-  const float fs = 22.0f * s;
+  const float fs = 26.0f * s;
   const Vector2 sz = MeasureTextEx(game.font, line, fs, 0.0f);
   const Vector2 pos{(GetScreenWidth() - sz.x) * 0.5f, 47.0f * s};
-  DrawTextF(game.font, line, pos, fs, {230, 234, 224, 235});
+  DrawTextF(game.font, line, pos, fs, {236, 240, 230, 255});
   DrawLineEx({pos.x, pos.y + sz.y + 3.0f * s},
              {pos.x + sz.x, pos.y + sz.y + 3.0f * s},
              1.0f, {93, 112, 101, 130});
@@ -638,14 +761,20 @@ void DrawDetailedCue(Vector2 cueBall, Vector2 aimDir, float ballR,
   const Vector2 butt{tip.x - forward.x * cueLength,
                      tip.y - forward.y * cueLength};
 
-  const float tipW = std::max(3.0f, static_cast<float>(0.0108 * view.scale));
-  const float buttW = std::max(tipW * 2.25f, static_cast<float>(0.029 * view.scale));
+  const float tipW =
+      std::max(7.0f * view.uiScale, static_cast<float>(0.019 * view.scale));
+  const float buttW = std::max(
+      std::max(tipW * 2.75f, static_cast<float>(0.056 * view.scale)),
+      20.0f * view.uiScale);
   const float collarW = LerpF(buttW, tipW, 0.40f);
-  const float shaftTipW = tipW * 0.92f;
+  const float shaftTipW = tipW * 1.02f;
 
-  DrawLineEx({butt.x + 2.0f * view.uiScale, butt.y + 2.0f * view.uiScale},
-             {tip.x + 2.0f * view.uiScale, tip.y + 2.0f * view.uiScale},
-             buttW * 1.05f, {0, 0, 0, 95});
+  const Vector2 castShadow{2.6f * view.uiScale, 3.2f * view.uiScale};
+  DrawTaperedSection({butt.x + castShadow.x, butt.y + castShadow.y},
+                     {tip.x + castShadow.x, tip.y + castShadow.y},
+                     normal, buttW * 1.22f, tipW * 1.22f, {0, 0, 0, 58});
+  DrawTaperedSection(butt, tip, normal, buttW * 1.10f, tipW * 1.10f,
+                     {5, 6, 5, 120});
 
   DrawTaperedSection(PointAlong(butt, tip, 0.00f), PointAlong(butt, tip, 0.035f),
                      normal, buttW * 0.96f, buttW * 0.92f, {12, 12, 11, 255});
@@ -698,19 +827,19 @@ void DrawUI(Game &game) {
       hb::Clamp(std::min(GetScreenWidth() / 1360.0, GetScreenHeight() / 820.0),
                 0.72, 1.55));
   const int sw = GetScreenWidth();
-  Rectangle panel{static_cast<float>(sw) - 248.0f * s, 46.0f * s,
-                  214.0f * s, 332.0f * s};
-  DrawRectangleRounded(panel, 0.045f, 12, {12, 13, 14, 232});
-  DrawRectangleRoundedLines(panel, 0.045f, 12, {91, 101, 98, 140});
+  Rectangle panel{static_cast<float>(sw) - 258.0f * s, 46.0f * s,
+                  224.0f * s, 390.0f * s};
+  DrawRoundedFillWithBorder(panel, 0.045f, 12, {12, 13, 14, 232},
+                            {50, 58, 55, 190});
 
   const auto &rs = game.rules.State();
-  DrawTextF(game.font, "击球控制", {panel.x + 18 * s, panel.y + 18 * s}, 23 * s,
+  DrawTextF(game.font, "击球控制", {panel.x + 18 * s, panel.y + 17 * s}, 27 * s,
             {236, 238, 228, 255});
 
-  DrawTextF(game.font, "击点", {panel.x + 18 * s, panel.y + 58 * s}, 18 * s,
-            {188, 196, 188, 255});
-  const Vector2 center{panel.x + 107 * s, panel.y + 135 * s};
-  const float padR = 54.0f * s;
+  DrawTextF(game.font, "击点", {panel.x + 18 * s, panel.y + 61 * s}, 22 * s,
+            {205, 212, 204, 255});
+  const Vector2 center{panel.x + 112 * s, panel.y + 146 * s};
+  const float padR = 50.0f * s;
   DrawCircleV(center, padR, {25, 29, 29, 255});
   DrawCircleLines(static_cast<int>(center.x), static_cast<int>(center.y), padR, {113, 128, 121, 180});
   DrawLineEx({center.x - padR, center.y}, {center.x + padR, center.y}, 1.0f, {110, 119, 115, 125});
@@ -718,49 +847,49 @@ void DrawUI(Game &game) {
   DrawCircleV({center.x + static_cast<float>(game.tipX * padR),
                center.y - static_cast<float>(game.tipY * padR)},
               7.0f, {228, 232, 218, 255});
-  DrawTextF(game.font, "左", {center.x - padR - 20 * s, center.y - 9 * s}, 15 * s,
-            {150, 159, 152, 255});
-  DrawTextF(game.font, "右", {center.x + padR + 8 * s, center.y - 9 * s}, 15 * s,
-            {150, 159, 152, 255});
-  DrawTextF(game.font, "高", {center.x - 8 * s, center.y - padR - 23 * s}, 15 * s,
-            {150, 159, 152, 255});
-  DrawTextF(game.font, "低", {center.x - 8 * s, center.y + padR + 7 * s}, 15 * s,
-            {150, 159, 152, 255});
+  DrawTextF(game.font, "左", {center.x - padR - 27 * s, center.y - 10 * s}, 18 * s,
+            {177, 186, 178, 255});
+  DrawTextF(game.font, "右", {center.x + padR + 10 * s, center.y - 10 * s}, 18 * s,
+            {177, 186, 178, 255});
+  DrawTextF(game.font, "高", {center.x - 9 * s, center.y - padR - 29 * s}, 18 * s,
+            {177, 186, 178, 255});
+  DrawTextF(game.font, "低", {center.x - 9 * s, center.y + padR + 13 * s}, 18 * s,
+            {177, 186, 178, 255});
 
-  Button(game.font, {panel.x + 18 * s, panel.y + 205 * s, 178 * s, 28 * s},
+  Button(game.font, {panel.x + 18 * s, panel.y + 238 * s, 188 * s, 30 * s},
          "还原", true);
 
   char powerText[64]{};
   std::snprintf(powerText, sizeof(powerText), "力度 %3d%%", static_cast<int>(game.power * 100.0));
-  DrawTextF(game.font, powerText, {panel.x + 18 * s, panel.y + 250 * s}, 18 * s,
-            {213, 218, 209, 255});
-  DrawRectangleRounded({panel.x + 18 * s, panel.y + 278 * s, 178 * s, 12 * s}, 0.4f, 8, {28, 31, 31, 255});
-  DrawRectangleRounded({panel.x + 18 * s, panel.y + 278 * s, static_cast<float>(178.0 * game.power * s), 12 * s},
+  DrawTextF(game.font, powerText, {panel.x + 18 * s, panel.y + 292 * s}, 22 * s,
+            {226, 231, 221, 255});
+  DrawRectangleRounded({panel.x + 18 * s, panel.y + 322 * s, 188 * s, 12 * s}, 0.4f, 8, {28, 31, 31, 255});
+  DrawRectangleRounded({panel.x + 18 * s, panel.y + 322 * s, static_cast<float>(188.0 * game.power * s), 12 * s},
                        0.4f, 8, {143, 170, 151, 255});
 
-  Button(game.font, {panel.x + 18 * s, panel.y + 304 * s, 178 * s, 28 * s},
+  Button(game.font, {panel.x + 18 * s, panel.y + 354 * s, 188 * s, 30 * s},
          "重新摆球", true);
 
   Rectangle msg{48.0f * s, static_cast<float>(GetScreenHeight()) - 58.0f * s,
                 static_cast<float>(GetScreenWidth()) - 96.0f * s, 34.0f * s};
   DrawRectangleRounded(msg, 0.08f, 8, {9, 10, 10, 210});
-  DrawTextF(game.font, rs.message.c_str(), {msg.x + 14 * s, msg.y + 8 * s}, 18 * s, {221, 224, 216, 255});
+  DrawTextF(game.font, rs.message.c_str(), {msg.x + 14 * s, msg.y + 6 * s}, 22 * s, {221, 224, 216, 255});
 
   if (game.phase == Phase::GroupChoice) {
     Rectangle modal{static_cast<float>(GetScreenWidth()) * 0.5f - 170.0f,
                     static_cast<float>(GetScreenHeight()) * 0.5f - 62.0f, 340.0f, 124.0f};
-    DrawRectangleRounded(modal, 0.04f, 12, {13, 15, 15, 245});
-    DrawRectangleRoundedLines(modal, 0.04f, 12, {130, 142, 136, 190});
-    DrawTextF(game.font, "选择球组", {modal.x + 114, modal.y + 20}, 22, {236, 238, 228, 255});
-    Button(game.font, {modal.x + 34, modal.y + 70, 126, 32}, "全色球", true);
-    Button(game.font, {modal.x + 180, modal.y + 70, 126, 32}, "半色球", true);
+    DrawRoundedFillWithBorder(modal, 0.04f, 12, {13, 15, 15, 245},
+                              {72, 84, 78, 220});
+    DrawTextF(game.font, "选择球组", {modal.x + 108, modal.y + 17}, 26, {236, 238, 228, 255});
+    Button(game.font, {modal.x + 34, modal.y + 69, 126, 34}, "全色球", true);
+    Button(game.font, {modal.x + 180, modal.y + 69, 126, 34}, "半色球", true);
   }
 }
 
 Rectangle TitleButton(float x, const char *label, Font font, bool hot) {
   Rectangle r{x, 0.0f, 42.0f, 34.0f};
   DrawRectangleRec(r, hot ? Color{30, 33, 33, 255} : Color{0, 0, 0, 0});
-  const float fs = 20.0f;
+  const float fs = 22.0f;
   const Vector2 sz = MeasureTextEx(font, label, fs, 0.0f);
   DrawTextF(font, label, {r.x + (r.width - sz.x) * 0.5f, r.y + 6.0f}, fs,
             {198, 204, 197, 235});
@@ -773,9 +902,9 @@ void DrawTitleBar(Game &game) {
   Rectangle bar{0.0f, 0.0f, w, 34.0f};
   DrawRectangleRec(bar, BLACK);
   DrawRectangle(0, 33, GetScreenWidth(), 1, {50, 57, 55, 120});
-  DrawTextF(game.font, "中式八球", {18.0f, 7.0f}, 18.0f, {207, 214, 207, 220});
-  DrawTextF(game.font, "双人对战", {100.0f, 8.0f}, 16.0f,
-            {117, 128, 122, 210});
+  DrawTextF(game.font, "中式八球", {18.0f, 5.0f}, 20.0f, {218, 224, 216, 255});
+  DrawTextF(game.font, "双人对战", {108.0f, 6.0f}, 18.0f,
+            {142, 154, 147, 230});
   const Rectangle minR = TitleButton(w - 86.0f, "-", game.font,
                                      PointInRect(mouse, {w - 86.0f, 0.0f, 42.0f, 34.0f}));
   const Rectangle closeR = TitleButton(w - 43.0f, "×", game.font,
@@ -882,21 +1011,21 @@ void HandleUiInput(Game &game) {
                 0.72, 1.55));
   const Vector2 mouse = GetMousePosition();
   const int sw = GetScreenWidth();
-  Rectangle panel{static_cast<float>(sw) - 248.0f * s, 46.0f * s,
-                  214.0f * s, 332.0f * s};
-  const Vector2 tipCenter{panel.x + 107 * s, panel.y + 135 * s};
-  const float tipR = 54.0f * s;
+  Rectangle panel{static_cast<float>(sw) - 258.0f * s, 46.0f * s,
+                  224.0f * s, 390.0f * s};
+  const Vector2 tipCenter{panel.x + 112 * s, panel.y + 146 * s};
+  const float tipR = 50.0f * s;
 
   if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
     if (Vector2Distance(mouse, tipCenter) <= tipR) {
       game.tipX = hb::Clamp((mouse.x - tipCenter.x) / tipR, -1.0, 1.0);
       game.tipY = hb::Clamp(-(mouse.y - tipCenter.y) / tipR, -1.0, 1.0);
     }
-    if (PointInRect(mouse, {panel.x + 18 * s, panel.y + 205 * s, 178 * s, 28 * s})) {
+    if (PointInRect(mouse, {panel.x + 18 * s, panel.y + 238 * s, 188 * s, 30 * s})) {
       game.tipX = 0.0;
       game.tipY = 0.0;
     }
-    if (PointInRect(mouse, {panel.x + 18 * s, panel.y + 304 * s, 178 * s, 28 * s})) {
+    if (PointInRect(mouse, {panel.x + 18 * s, panel.y + 354 * s, 188 * s, 30 * s})) {
       game.world.ResetRack();
       game.rules.ResetRack(1 - game.rules.State().currentPlayer);
       game.phase = Phase::Aiming;
@@ -994,11 +1123,11 @@ void DrawGame(Game &game, const View &view) {
   if (game.phase == Phase::RackOver) {
     Rectangle r{static_cast<float>(GetScreenWidth()) * 0.5f - 190.0f,
                 static_cast<float>(GetScreenHeight()) * 0.5f - 45.0f, 380.0f, 90.0f};
-    DrawRectangleRounded(r, 0.05f, 12, {11, 12, 12, 240});
-    DrawRectangleRoundedLines(r, 0.05f, 12, {128, 142, 134, 170});
-    DrawTextF(game.font, game.rules.State().message.c_str(), {r.x + 42, r.y + 20}, 24,
+    DrawRoundedFillWithBorder(r, 0.05f, 12, {11, 12, 12, 240},
+                              {70, 82, 76, 210});
+    DrawTextF(game.font, game.rules.State().message.c_str(), {r.x + 35, r.y + 15}, 28,
               {236, 238, 228, 255});
-    DrawTextF(game.font, "按空格键开始下一局", {r.x + 74, r.y + 54}, 18,
+    DrawTextF(game.font, "按空格键开始下一局", {r.x + 63, r.y + 52}, 22,
               {180, 190, 182, 255});
   }
 }
@@ -1033,11 +1162,10 @@ int main(int argc, char **argv) {
 
   Game game;
   std::vector<int> codepoints = BuildFontCodepoints();
-  game.font = LoadFontEx("C:/Windows/Fonts/Dengb.ttf", 96, codepoints.data(),
-                         static_cast<int>(codepoints.size()));
+  game.font = LoadPingFangFont(codepoints);
   game.customFont = game.font.texture.id != 0;
   if (game.customFont) {
-    SetTextureFilter(game.font.texture, TEXTURE_FILTER_BILINEAR);
+    ConfigureFontTexture(game.font);
   }
   if (!game.customFont) {
     game.font = GetFontDefault();

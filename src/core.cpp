@@ -80,6 +80,107 @@ bool ContainsNumber(const std::vector<int> &values, int number) {
   return std::find(values.begin(), values.end(), number) != values.end();
 }
 
+struct Vec3 {
+  double x = 0.0;
+  double y = 0.0;
+  double z = 0.0;
+};
+
+Vec3 Cross(Vec3 a, Vec3 b) {
+  return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z,
+          a.x * b.y - a.y * b.x};
+}
+
+double Dot(Vec3 a, Vec3 b) {
+  return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+double Length(Vec3 a) {
+  return std::sqrt(Dot(a, a));
+}
+
+Vec3 Normalize(Vec3 a) {
+  const double len = Length(a);
+  if (len < 1e-9) {
+    return {0.0, 0.0, 1.0};
+  }
+  return {a.x / len, a.y / len, a.z / len};
+}
+
+std::array<double, 9> IdentityOrientation() {
+  return {{1.0, 0.0, 0.0,
+           0.0, 1.0, 0.0,
+           0.0, 0.0, 1.0}};
+}
+
+std::array<double, 9> RotationMatrix(Vec3 axis, double angle) {
+  axis = Normalize(axis);
+  const double c = std::cos(angle);
+  const double s = std::sin(angle);
+  const double t = 1.0 - c;
+  return {{t * axis.x * axis.x + c,
+           t * axis.x * axis.y - s * axis.z,
+           t * axis.x * axis.z + s * axis.y,
+           t * axis.x * axis.y + s * axis.z,
+           t * axis.y * axis.y + c,
+           t * axis.y * axis.z - s * axis.x,
+           t * axis.x * axis.z - s * axis.y,
+           t * axis.y * axis.z + s * axis.x,
+           t * axis.z * axis.z + c}};
+}
+
+std::array<double, 9> Multiply(std::array<double, 9> a,
+                               std::array<double, 9> b) {
+  std::array<double, 9> out{};
+  for (int row = 0; row < 3; ++row) {
+    for (int col = 0; col < 3; ++col) {
+      out[row * 3 + col] = a[row * 3 + 0] * b[col + 0] +
+                           a[row * 3 + 1] * b[col + 3] +
+                           a[row * 3 + 2] * b[col + 6];
+    }
+  }
+  return out;
+}
+
+void Orthonormalize(std::array<double, 9> &m) {
+  Vec3 x{m[0], m[3], m[6]};
+  Vec3 y{m[1], m[4], m[7]};
+  x = Normalize(x);
+  y = {y.x - x.x * Dot(x, y), y.y - x.y * Dot(x, y),
+       y.z - x.z * Dot(x, y)};
+  y = Normalize(y);
+  Vec3 z = Normalize(Cross(x, y));
+  y = Normalize(Cross(z, x));
+  m = {{x.x, y.x, z.x,
+        x.y, y.y, z.y,
+        x.z, y.z, z.z}};
+}
+
+void ApplyWorldRotation(Ball &ball, Vec3 axis, double angle) {
+  if (std::abs(angle) < 1e-9) {
+    return;
+  }
+  ball.orientation = Multiply(RotationMatrix(axis, angle), ball.orientation);
+  Orthonormalize(ball.orientation);
+}
+
+void SetInitialOrientation(Ball &ball, int seed) {
+  ball.orientation = IdentityOrientation();
+  ApplyWorldRotation(ball, {1.0, 0.0, 0.0}, 0.47 * (seed + 1));
+  ApplyWorldRotation(ball, {0.0, 1.0, 0.0}, 0.71 * (seed + 3));
+  ApplyWorldRotation(ball, {0.0, 0.0, 1.0}, 0.37 * (seed + 5));
+}
+
+void IntegrateOrientation(Ball &ball, double dt) {
+  const Vec3 omega{ball.rollOmega.x, ball.rollOmega.y, ball.sideOmega};
+  const double speed = Length(omega);
+  if (speed < 1e-6) {
+    return;
+  }
+  ApplyWorldRotation(ball, {omega.x / speed, omega.y / speed, omega.z / speed},
+                     speed * dt);
+}
+
 struct CushionSegment {
   Vec2 a{};
   Vec2 b{};
@@ -282,6 +383,7 @@ void PhysicsWorld::ResetRack() {
     balls_[i] = Ball{};
     balls_[i].number = i;
     balls_[i].decal = {0.0, 0.0};
+    SetInitialOrientation(balls_[i], i);
   }
 
   balls_[0].pos = {-kTableWidth * 0.30, 0.0};
@@ -365,6 +467,7 @@ void PhysicsWorld::PlaceCue(Vec2 pos) {
   cue.vel = {};
   cue.rollOmega = {};
   cue.sideOmega = 0.0;
+  SetInitialOrientation(cue, 0);
   cue.sinking = false;
   cue.pocketed = false;
   cue.pocketFade = 0.0;
@@ -388,6 +491,7 @@ void PhysicsWorld::SpotBall(int number) {
   ball.vel = {};
   ball.rollOmega = {};
   ball.sideOmega = 0.0;
+  SetInitialOrientation(ball, number);
   ball.sinking = false;
   ball.pocketed = false;
   ball.pocketFade = 0.0;
@@ -430,6 +534,7 @@ void PhysicsWorld::Integrate(double dt) {
     ball.rollAngle += Length(ball.vel) * dt / kBallRadius;
     ball.decal.x += delta.x / kBallRadius;
     ball.decal.y += delta.y / kBallRadius;
+    IntegrateOrientation(ball, dt);
   }
 }
 
