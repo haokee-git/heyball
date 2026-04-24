@@ -971,10 +971,17 @@ void DrawGame(Game &game, const View &view) {
   DrawTitleBar(game);
   DrawTopStatus(game);
   DrawTable(view);
-  for (const Ball &ball : game.world.Balls()) {
-    DrawBall(game.font, view, ball);
-  }
   DrawPockets(view);
+  for (const Ball &ball : game.world.Balls()) {
+    if (!ball.sinking) {
+      DrawBall(game.font, view, ball);
+    }
+  }
+  for (const Ball &ball : game.world.Balls()) {
+    if (ball.sinking) {
+      DrawBall(game.font, view, ball);
+    }
+  }
   DrawCueAndAim(game, view);
   if (game.phase == Phase::BallInHand) {
     const Vector2 p = WorldToScreen(view, game.world.CueBall().pos);

@@ -91,7 +91,7 @@ public:
   void ResetRack();
   void Step(double dt, ShotEvents *events);
   void StrikeCue(const ShotParams &shot);
-  bool IsMoving(double threshold = 0.018) const;
+  bool IsMoving(double threshold = 0.004) const;
   bool CanPlaceCue(Vec2 pos) const;
   void PlaceCue(Vec2 pos);
   void SpotBall(int number);

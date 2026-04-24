@@ -86,6 +86,37 @@ void TestPocket() {
   Check(!world.IsMoving(), "world stops after pocket animation");
 }
 
+void TestCuePocketAnimation() {
+  hb::PhysicsWorld world;
+  for (auto &b : world.Balls()) {
+    b.pocketed = true;
+  }
+  auto &cue = world.Balls()[0];
+  cue.pocketed = false;
+  cue.pos = {-hb::kTableWidth * 0.5 + 0.01, -hb::kTableHeight * 0.5 + 0.01};
+  hb::ShotEvents events;
+  world.Step(hb::kFixedStep, &events);
+  Check(cue.sinking, "cue ball starts pocket animation");
+  Check(events.cuePocketed, "cue pocket event recorded");
+  Check(world.IsMoving(), "cue pocket animation keeps world moving");
+  StepFor(world, events, 0.2);
+  Check(cue.sinking && !cue.pocketed, "cue ball remains visible while sinking");
+  StepFor(world, events, 0.5);
+  Check(cue.pocketed, "cue ball finishes pocket animation");
+}
+
+void TestSlowBallKeepsWorldMoving() {
+  hb::PhysicsWorld world;
+  for (auto &b : world.Balls()) {
+    b.pocketed = true;
+  }
+  auto &ball = world.Balls()[2];
+  ball.pocketed = false;
+  ball.pos = {0.0, 0.0};
+  ball.vel = {0.01, 0.0};
+  Check(world.IsMoving(), "slow rolling ball keeps shot alive");
+}
+
 void TestSidePocketThroatCapturesBall() {
   hb::PhysicsWorld world;
   for (auto &b : world.Balls()) {
@@ -184,6 +215,8 @@ int main() {
   TestRailBounce();
   TestFrictionStopsBall();
   TestPocket();
+  TestCuePocketAnimation();
+  TestSlowBallKeepsWorldMoving();
   TestSidePocketThroatCapturesBall();
   TestSidePocketDoesNotPullIdleBall();
   TestRulesFoulGivesBallInHand();
