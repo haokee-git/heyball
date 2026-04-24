@@ -1,0 +1,60 @@
+{
+  "version": 2,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 20,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "ucrt64-debug",
+      "displayName": "MSYS2 UCRT64 Debug",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/ucrt64-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_COMPILER": "D:/msys64/ucrt64/bin/g++.exe",
+        "CMAKE_MAKE_PROGRAM": "D:/msys64/ucrt64/bin/ninja.exe",
+        "MSYS2_UCRT64": "D:/msys64/ucrt64"
+      }
+    },
+    {
+      "name": "ucrt64-release",
+      "displayName": "MSYS2 UCRT64 Release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/ucrt64-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_COMPILER": "D:/msys64/ucrt64/bin/g++.exe",
+        "CMAKE_MAKE_PROGRAM": "D:/msys64/ucrt64/bin/ninja.exe",
+        "MSYS2_UCRT64": "D:/msys64/ucrt64"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "ucrt64-debug",
+      "configurePreset": "ucrt64-debug"
+    },
+    {
+      "name": "ucrt64-release",
+      "configurePreset": "ucrt64-release"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "ucrt64-debug",
+      "configurePreset": "ucrt64-debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "ucrt64-release",
+      "configurePreset": "ucrt64-release",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}

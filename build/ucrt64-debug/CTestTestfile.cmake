@@ -5,4 +5,4 @@
 # This file includes the relevant testing commands required for 
 # testing this directory and lists subdirectories to be tested as well.
 add_test([=[heyball_tests]=] "D:/heyball/build/ucrt64-debug/heyball_tests.exe")
-set_tests_properties([=[heyball_tests]=] PROPERTIES  _BACKTRACE_TRIPLES "D:/heyball/CMakeLists.txt;53;add_test;D:/heyball/CMakeLists.txt;0;")
+set_tests_properties([=[heyball_tests]=] PROPERTIES  _BACKTRACE_TRIPLES "D:/heyball/CMakeLists.txt;61;add_test;D:/heyball/CMakeLists.txt;0;")

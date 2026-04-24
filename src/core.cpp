@@ -24,7 +24,56 @@ std::array<Vec2, 6> PocketCenters() {
 
 double PocketRadiusForIndex(int i) {
   const double mouth = (i == 1 || i == 4) ? kSidePocketMouth : kCornerPocketMouth;
-  return mouth * 0.72;
+  return mouth * 0.78;
+}
+
+bool IsMovingIntoPocket(Vec2 pos, Vec2 vel, Vec2 center) {
+  const double speed = Length(vel);
+  if (speed < 0.035) {
+    return false;
+  }
+  const Vec2 toPocket = center - pos;
+  const double distance = Length(toPocket);
+  if (distance < 1e-6) {
+    return true;
+  }
+  return Dot(vel, toPocket / distance) > 0.012;
+}
+
+bool IsPocketCapture(Vec2 pos, Vec2 vel, int index, Vec2 center) {
+  const bool committedByMotion = IsMovingIntoPocket(pos, vel, center);
+
+  const bool sidePocket = index == 1 || index == 4;
+  if (sidePocket) {
+    const double halfMouth = kSidePocketMouth * 0.74 + kBallRadius * 0.35;
+    const double throatDepth = kCushionNoseInset + kBallRadius * 0.85;
+    const double fallDepth = kBallRadius * 0.44;
+    if (std::abs(pos.x - center.x) > halfMouth) {
+      return false;
+    }
+    const bool inThroat = index == 1 ? pos.y <= center.y + throatDepth
+                                     : pos.y >= center.y - throatDepth;
+    const bool overDrop = index == 1 ? pos.y <= center.y + fallDepth
+                                     : pos.y >= center.y - fallDepth;
+    return overDrop || (inThroat && committedByMotion);
+  }
+
+  const bool left = index == 0 || index == 3;
+  const bool top = index == 0 || index == 2;
+  const double inwardX = left ? pos.x - center.x : center.x - pos.x;
+  const double inwardY = top ? pos.y - center.y : center.y - pos.y;
+  const double mouth = kCornerPocketMouth * 0.74 + kBallRadius * 0.35;
+  const double throatDepth = kCushionNoseInset + kBallRadius * 0.85;
+  const double fallDepth = kBallRadius * 0.44;
+  const double outsideAllowance = kBallRadius * 0.25;
+  if (inwardX < -outsideAllowance || inwardY < -outsideAllowance ||
+      inwardX > mouth || inwardY > mouth) {
+    return false;
+  }
+  const bool overDrop = inwardX <= fallDepth && inwardY <= fallDepth;
+  const bool inThroat = inwardX <= throatDepth || inwardY <= throatDepth ||
+                        Distance(pos, center) < PocketRadiusForIndex(index);
+  return overDrop || (inThroat && committedByMotion);
 }
 
 bool ContainsNumber(const std::vector<int> &values, int number) {
@@ -37,6 +86,39 @@ struct CushionSegment {
   Vec2 normal{};
 };
 
+Vec2 BezierCubic(Vec2 a, Vec2 b, Vec2 c, Vec2 d, double t) {
+  const double u = 1.0 - t;
+  return a * (u * u * u) + b * (3.0 * u * u * t) +
+         c * (3.0 * u * t * t) + d * (t * t * t);
+}
+
+void AddCushionSegment(std::vector<CushionSegment> &segments, Vec2 a, Vec2 b) {
+  const Vec2 tangent = b - a;
+  if (LengthSq(tangent) < 1e-12) {
+    return;
+  }
+  const Vec2 t = Normalize(tangent);
+  const Vec2 mid = (a + b) * 0.5;
+  const Vec2 towardCenter = Normalize(Vec2{} - mid);
+  Vec2 normal = Perp(t);
+  if (Dot(normal, towardCenter) < 0.0) {
+    normal *= -1.0;
+  }
+  segments.push_back({a, b, normal});
+}
+
+void AppendCushionBezier(std::vector<CushionSegment> &segments, Vec2 a, Vec2 b,
+                         Vec2 c, Vec2 d) {
+  constexpr int kSegments = 10;
+  Vec2 previous = a;
+  for (int i = 1; i <= kSegments; ++i) {
+    const Vec2 next =
+        BezierCubic(a, b, c, d, static_cast<double>(i) / kSegments);
+    AddCushionSegment(segments, previous, next);
+    previous = next;
+  }
+}
+
 Vec2 ClosestPointOnSegment(Vec2 p, Vec2 a, Vec2 b) {
   const Vec2 ab = b - a;
   const double denom = LengthSq(ab);
@@ -47,19 +129,61 @@ Vec2 ClosestPointOnSegment(Vec2 p, Vec2 a, Vec2 b) {
   return a + ab * t;
 }
 
-std::array<CushionSegment, 6> CushionSegments() {
-  const double left = -kTableWidth * 0.5 + kCushionNoseInset;
-  const double right = kTableWidth * 0.5 - kCushionNoseInset;
-  const double top = -kTableHeight * 0.5 + kCushionNoseInset;
-  const double bottom = kTableHeight * 0.5 - kCushionNoseInset;
-  const double cornerGap = kCornerPocketMouth * 0.62 + kCushionNoseInset;
-  const double sideGap = kSidePocketMouth * 0.52 + kCushionNoseInset * 0.5;
-  return {{{{left + cornerGap, top}, {-sideGap, top}, {0.0, 1.0}},
-           {{sideGap, top}, {right - cornerGap, top}, {0.0, 1.0}},
-           {{left + cornerGap, bottom}, {-sideGap, bottom}, {0.0, -1.0}},
-           {{sideGap, bottom}, {right - cornerGap, bottom}, {0.0, -1.0}},
-           {{left, top + cornerGap}, {left, bottom - cornerGap}, {1.0, 0.0}},
-           {{right, top + cornerGap}, {right, bottom - cornerGap}, {-1.0, 0.0}}}};
+void AddHorizontalCushion(std::vector<CushionSegment> &segments, double x1,
+                          double x2, double outerY, bool top) {
+  if (x2 <= x1 + kCushionNoseInset * 2.0) {
+    return;
+  }
+  const double sy = top ? 1.0 : -1.0;
+  const double innerY = outerY + sy * kCushionNoseInset;
+  const double jaw =
+      std::min(kCushionNoseInset * 2.45, (x2 - x1) * 0.42);
+  AppendCushionBezier(segments, {x1, outerY},
+                      {x1 + jaw * 0.08, outerY + sy * kCushionNoseInset * 0.16},
+                      {x1 + jaw * 0.52, innerY}, {x1 + jaw, innerY});
+  AddCushionSegment(segments, {x1 + jaw, innerY}, {x2 - jaw, innerY});
+  AppendCushionBezier(segments, {x2 - jaw, innerY},
+                      {x2 - jaw * 0.52, innerY},
+                      {x2 - jaw * 0.08, outerY + sy * kCushionNoseInset * 0.16},
+                      {x2, outerY});
+}
+
+void AddVerticalCushion(std::vector<CushionSegment> &segments, double outerX,
+                        double y1, double y2, bool left) {
+  if (y2 <= y1 + kCushionNoseInset * 2.0) {
+    return;
+  }
+  const double sx = left ? 1.0 : -1.0;
+  const double innerX = outerX + sx * kCushionNoseInset;
+  const double jaw =
+      std::min(kCushionNoseInset * 2.45, (y2 - y1) * 0.42);
+  AppendCushionBezier(segments, {outerX, y1},
+                      {outerX + sx * kCushionNoseInset * 0.16, y1 + jaw * 0.08},
+                      {innerX, y1 + jaw * 0.52}, {innerX, y1 + jaw});
+  AddCushionSegment(segments, {innerX, y1 + jaw}, {innerX, y2 - jaw});
+  AppendCushionBezier(segments, {innerX, y2 - jaw},
+                      {innerX, y2 - jaw * 0.52},
+                      {outerX + sx * kCushionNoseInset * 0.16, y2 - jaw * 0.08},
+                      {outerX, y2});
+}
+
+std::vector<CushionSegment> CushionSegments() {
+  const double left = -kTableWidth * 0.5;
+  const double right = kTableWidth * 0.5;
+  const double top = -kTableHeight * 0.5;
+  const double bottom = kTableHeight * 0.5;
+  const double cornerGap = kCornerPocketMouth * 0.74;
+  const double sideGap = kSidePocketMouth * 0.74;
+
+  std::vector<CushionSegment> segments;
+  segments.reserve(72);
+  AddHorizontalCushion(segments, left + cornerGap, -sideGap, top, true);
+  AddHorizontalCushion(segments, sideGap, right - cornerGap, top, true);
+  AddHorizontalCushion(segments, left + cornerGap, -sideGap, bottom, false);
+  AddHorizontalCushion(segments, sideGap, right - cornerGap, bottom, false);
+  AddVerticalCushion(segments, left, top + cornerGap, bottom - cornerGap, true);
+  AddVerticalCushion(segments, right, top + cornerGap, bottom - cornerGap, false);
+  return segments;
 }
 
 } // namespace
@@ -203,6 +327,9 @@ void PhysicsWorld::StrikeCue(const ShotParams &shot) {
 
 bool PhysicsWorld::IsMoving(double threshold) const {
   for (const Ball &ball : balls_) {
+    if (ball.sinking) {
+      return true;
+    }
     if (!ball.pocketed && !ball.sinking && Length(ball.vel) > threshold) {
       return true;
     }
@@ -272,6 +399,7 @@ void PhysicsWorld::Step(double dt, ShotEvents *events) {
   while (accumulator_ >= kFixedStep && guard++ < 24) {
     CheckPockets(events);
     Integrate(kFixedStep);
+    CheckPockets(events);
     ResolveBallContacts(events);
     ResolveRailContacts(events);
     CheckPockets(events);
@@ -399,13 +527,14 @@ void PhysicsWorld::ResolveRailContacts(ShotEvents *events) {
       const Vec2 closest = ClosestPointOnSegment(ball.pos, segment.a, segment.b);
       const Vec2 delta = ball.pos - closest;
       const double dist = Length(delta);
-      if (dist >= kBallRadius) {
+      const double signedDistance = Dot(delta, segment.normal);
+      if (dist >= kBallRadius || signedDistance <= -kBallRadius * 0.35) {
         continue;
       }
       Vec2 normal = segment.normal;
       if (dist > 1e-8) {
         const Vec2 candidate = delta / dist;
-        if (Dot(candidate, segment.normal) > -0.05) {
+        if (Dot(candidate, segment.normal) > 0.12) {
           normal = candidate;
         }
       }
@@ -434,8 +563,7 @@ void PhysicsWorld::CheckPockets(ShotEvents *events) {
       continue;
     }
     for (int i = 0; i < static_cast<int>(pockets.size()); ++i) {
-      const double radius = PocketRadiusForIndex(i);
-      if (Distance(ball.pos, pockets[i]) < radius) {
+      if (IsPocketCapture(ball.pos, ball.vel, i, pockets[i])) {
         ball.sinking = true;
         ball.sinkTarget = pockets[i];
         ball.vel = {};

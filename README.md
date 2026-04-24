@@ -58,6 +58,27 @@ D:\msys64\ucrt64\bin\cmake.exe --build build/ucrt64-debug
 
 这些比例用于让中式/Heyball 的窄袋和标准球尺寸在画面与物理中保持协调。
 
+## Release build
+
+Release builds use the same fixed MSYS2 UCRT64 toolchain and write to
+`build/ucrt64-release`.
+
+```powershell
+D:\msys64\ucrt64\bin\cmake.exe --preset ucrt64-release
+D:\msys64\ucrt64\bin\cmake.exe --build --preset ucrt64-release
+```
+
+Generated files:
+
+- `build/ucrt64-release/heyball.exe`
+- `build/ucrt64-release/heyball_tests.exe`
+
+Run the Release build:
+
+```powershell
+.\build\ucrt64-release\heyball.exe
+```
+
 ## 当前调校重点
 
 - 继续优化袋口旁边库边曲线、角袋/中袋 jaws 和袋口拒球表现。

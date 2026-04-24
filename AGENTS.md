@@ -12,10 +12,18 @@
 
 ---
 
+## 协作约定
+
+- 以后所有构建命令由用户手动运行，Codex 不主动执行构建命令；若需要验证构建结果，只说明建议运行的命令并等待用户反馈。
+- 最近一次构建命令已由用户确认正确运行完毕。
+
+---
+
 ## 项目进度
 
 - 已建立 raylib + C++17 + CMake/Ninja 项目，固定使用 `D:/msys64/ucrt64/bin/g++.exe`，避免误用 PATH 中的其它 `g++`。
-- 已实现 `heyball.exe` 主程序和 `heyball_tests.exe` 无窗口测试目标；构建目录为 `build/ucrt64-debug`。
+- 已实现 `heyball.exe` 主程序和 `heyball_tests.exe` 无窗口测试目标；Debug 构建目录为 `build/ucrt64-debug`。
+- 已加入 `CMakePresets.json`，提供 `ucrt64-debug` 和 `ucrt64-release` 两套固定 MSYS2 UCRT64 工具链配置；Release 构建目录为 `build/ucrt64-release`。
 - 已加入 `tools/ucrt64-env.cmd`，构建时自动补充 `D:\msys64\ucrt64\bin` 到运行时 PATH，解决 MSYS2 编译器子进程 DLL 搜索问题。
 - 已将主程序配置为 Windows GUI 子系统，默认启动不打开控制台；带 `--console` 或 `--debug-console` 参数时才分配控制台。
 - 已在构建后自动复制 `D:/msys64/ucrt64/bin/glfw3.dll` 到 `heyball.exe` 输出目录。

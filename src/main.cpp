@@ -265,15 +265,19 @@ Color ShadeBallPixel(Color base, Vector3 n, float edgeAlpha) {
 }
 
 void DrawBall(Font font, const View &view, const Ball &ball) {
-  if (ball.pocketed && ball.pocketFade >= 1.0) {
+  if ((ball.pocketed || ball.sinking) && ball.pocketFade >= 1.0) {
     return;
   }
   const Vector2 c = WorldToScreen(view, ball.pos);
   float r = static_cast<float>(hb::kBallRadius * view.scale);
-  if (ball.pocketed) {
-    r *= static_cast<float>(1.0 - ball.pocketFade * 0.7);
+  float visualAlpha = 1.0f;
+  if (ball.sinking || ball.pocketed) {
+    const float drop = static_cast<float>(hb::Clamp(ball.pocketFade, 0.0, 1.0));
+    r *= 1.0f - drop * 0.72f;
+    visualAlpha = 1.0f - drop * 0.46f;
   }
-  DrawCircleV({c.x + r * 0.18f, c.y + r * 0.22f}, r * 1.02f, {0, 0, 0, 115});
+  DrawCircleV({c.x + r * 0.18f, c.y + r * 0.22f}, r * 1.02f,
+              {0, 0, 0, static_cast<unsigned char>(115 * visualAlpha)});
 
   const bool stripe = hb::IsStripe(ball.number);
   const Color base = BallColor(ball.number);
@@ -310,11 +314,15 @@ void DrawBall(Font font, const View &view, const Ball &ball) {
         }
       }
       const float edgeAlpha = d2 > 0.90f ? (1.0f - d2) / 0.10f : 1.0f;
-      DrawPixel(px, py, ShadeBallPixel(material, normal, edgeAlpha));
+      Color pixel = ShadeBallPixel(material, normal, edgeAlpha);
+      pixel.a = static_cast<unsigned char>(pixel.a * visualAlpha);
+      DrawPixel(px, py, pixel);
     }
   }
-  DrawCircleV({c.x - r * 0.32f, c.y - r * 0.34f}, r * 0.18f, {255, 255, 255, 110});
-  DrawCircleLines(static_cast<int>(c.x), static_cast<int>(c.y), r, {25, 25, 25, 150});
+  DrawCircleV({c.x - r * 0.32f, c.y - r * 0.34f}, r * 0.18f,
+              {255, 255, 255, static_cast<unsigned char>(110 * visualAlpha)});
+  DrawCircleLines(static_cast<int>(c.x), static_cast<int>(c.y), r,
+                  {25, 25, 25, static_cast<unsigned char>(150 * visualAlpha)});
 
   if (ball.number > 0) {
     const float sx = static_cast<float>(std::sin(ball.decal.x));
@@ -325,7 +333,9 @@ void DrawBall(Font font, const View &view, const Ball &ball) {
     const float visibility = std::max(0.0f, std::min(1.0f, normalZ * 0.85f + 0.25f));
     const float decalR = r * (0.30f + 0.14f * visibility);
     const Vector2 d{c.x + sx * r * 0.47f, c.y - sy * r * 0.47f};
-    DrawCircleV(d, decalR, {244, 241, 224, static_cast<unsigned char>(245 * visibility)});
+    DrawCircleV(d, decalR,
+                {244, 241, 224,
+                 static_cast<unsigned char>(245 * visibility * visualAlpha)});
     char label[4]{};
     std::snprintf(label, sizeof(label), "%d", ball.number);
     const float fs = (ball.number >= 10 ? r * 0.54f : r * 0.66f) * (0.76f + 0.24f * visibility);
@@ -333,7 +343,9 @@ void DrawBall(Font font, const View &view, const Ball &ball) {
     const float rotation =
         static_cast<float>(std::fmod((ball.decal.x - ball.decal.y) * 42.0, 360.0));
     DrawTextPro(font, label, {d.x, d.y}, {sz.x * 0.5f, sz.y * 0.5f}, rotation, fs,
-                0.0f, {15, 15, 15, static_cast<unsigned char>(255 * visibility)});
+                0.0f,
+                {15, 15, 15,
+                 static_cast<unsigned char>(255 * visibility * visualAlpha)});
   }
 }
 
@@ -379,68 +391,74 @@ void DrawPolyline(const std::vector<Vector2> &points, float thick,
 
 void DrawHorizontalCushion(float x1, float x2, float outerY, float depth,
                            bool top) {
-  const float curve = depth * 2.1f;
-  if (x2 <= x1 + curve * 2.0f) {
+  if (x2 <= x1 + depth * 2.0f) {
     return;
   }
+  const float jaw = std::min(depth * 2.45f, (x2 - x1) * 0.42f);
   const float innerY = outerY + (top ? depth : -depth);
   const float sy = top ? 1.0f : -1.0f;
   const Color rubber{26, 73, 59, 255};
-  const Color shadow{8, 19, 16, 225};
-  const Color nose{89, 137, 111, 230};
+  const Color nose{7, 31, 25, 205};
 
   std::vector<Vector2> body;
   body.push_back({x1, outerY});
   body.push_back({x2, outerY});
-  AppendBezier(body, {x2, outerY}, {x2 - curve * 0.18f, outerY},
-               {x2 - curve * 0.18f, innerY}, {x2 - curve, innerY});
-  body.push_back({x1 + curve, innerY});
-  AppendBezier(body, {x1 + curve, innerY}, {x1 + curve * 0.18f, innerY},
-               {x1 + curve * 0.18f, outerY}, {x1, outerY});
+  AppendBezier(body, {x2, outerY},
+               {x2 - jaw * 0.08f, outerY + sy * depth * 0.16f},
+               {x2 - jaw * 0.52f, innerY}, {x2 - jaw, innerY});
+  body.push_back({x1 + jaw, innerY});
+  AppendBezier(body, {x1 + jaw, innerY},
+               {x1 + jaw * 0.52f, innerY},
+               {x1 + jaw * 0.08f, outerY + sy * depth * 0.16f},
+               {x1, outerY});
   FillPolygonFan(body, rubber);
 
-  std::vector<Vector2> noseLine{{x1 + curve, innerY},
-                                {x2 - curve, innerY}};
-  DrawPolyline(noseLine, 2.0f, nose);
-  DrawLineEx({x1 + curve * 0.45f, outerY + sy * depth * 0.22f},
-             {x2 - curve * 0.45f, outerY + sy * depth * 0.22f},
-             1.0f, {130, 171, 143, 80});
-  DrawLineEx({x1 + curve * 0.32f, outerY + sy * depth * 0.88f},
-             {x2 - curve * 0.32f, outerY + sy * depth * 0.88f},
-             1.0f, shadow);
+  std::vector<Vector2> noseLine{{x1, outerY}};
+  AppendBezier(noseLine, {x1, outerY},
+               {x1 + jaw * 0.08f, outerY + sy * depth * 0.16f},
+               {x1 + jaw * 0.52f, innerY}, {x1 + jaw, innerY});
+  noseLine.push_back({x2 - jaw, innerY});
+  AppendBezier(noseLine, {x2 - jaw, innerY},
+               {x2 - jaw * 0.52f, innerY},
+               {x2 - jaw * 0.08f, outerY + sy * depth * 0.16f},
+               {x2, outerY});
+  DrawPolyline(noseLine, 1.35f, nose);
 }
 
 void DrawVerticalCushion(float outerX, float y1, float y2, float depth,
                          bool left) {
-  const float curve = depth * 2.1f;
-  if (y2 <= y1 + curve * 2.0f) {
+  if (y2 <= y1 + depth * 2.0f) {
     return;
   }
+  const float jaw = std::min(depth * 2.45f, (y2 - y1) * 0.42f);
   const float innerX = outerX + (left ? depth : -depth);
   const float sx = left ? 1.0f : -1.0f;
   const Color rubber{26, 73, 59, 255};
-  const Color shadow{8, 19, 16, 225};
-  const Color nose{89, 137, 111, 230};
+  const Color nose{7, 31, 25, 205};
 
   std::vector<Vector2> body;
   body.push_back({outerX, y1});
   body.push_back({outerX, y2});
-  AppendBezier(body, {outerX, y2}, {outerX, y2 - curve * 0.18f},
-               {innerX, y2 - curve * 0.18f}, {innerX, y2 - curve});
-  body.push_back({innerX, y1 + curve});
-  AppendBezier(body, {innerX, y1 + curve}, {innerX, y1 + curve * 0.18f},
-               {outerX, y1 + curve * 0.18f}, {outerX, y1});
+  AppendBezier(body, {outerX, y2},
+               {outerX + sx * depth * 0.16f, y2 - jaw * 0.08f},
+               {innerX, y2 - jaw * 0.52f}, {innerX, y2 - jaw});
+  body.push_back({innerX, y1 + jaw});
+  AppendBezier(body, {innerX, y1 + jaw},
+               {innerX, y1 + jaw * 0.52f},
+               {outerX + sx * depth * 0.16f, y1 + jaw * 0.08f},
+               {outerX, y1});
   FillPolygonFan(body, rubber);
 
-  std::vector<Vector2> noseLine{{innerX, y1 + curve},
-                                {innerX, y2 - curve}};
-  DrawPolyline(noseLine, 2.0f, nose);
-  DrawLineEx({outerX + sx * depth * 0.22f, y1 + curve * 0.45f},
-             {outerX + sx * depth * 0.22f, y2 - curve * 0.45f},
-             1.0f, {130, 171, 143, 80});
-  DrawLineEx({outerX + sx * depth * 0.88f, y1 + curve * 0.32f},
-             {outerX + sx * depth * 0.88f, y2 - curve * 0.32f},
-             1.0f, shadow);
+  std::vector<Vector2> noseLine{{outerX, y1}};
+  AppendBezier(noseLine, {outerX, y1},
+               {outerX + sx * depth * 0.16f, y1 + jaw * 0.08f},
+               {innerX, y1 + jaw * 0.52f}, {innerX, y1 + jaw});
+  noseLine.push_back({innerX, y2 - jaw});
+  AppendBezier(noseLine, {innerX, y2 - jaw},
+               {innerX, y2 - jaw * 0.52f},
+               {outerX + sx * depth * 0.16f, y2 - jaw * 0.08f},
+               {outerX, y2});
+  DrawPolyline(noseLine, 1.35f, nose);
 }
 
 void DrawPocketShape(const View &view, int index, Vector2 p) {
@@ -456,15 +474,27 @@ void DrawPocketShape(const View &view, int index, Vector2 p) {
   DrawCircleV(p, r, BLACK);
 }
 
+void DrawPockets(const View &view) {
+  const Vector2 pockets[6] = {
+      WorldToScreen(view, {-hb::kTableWidth * 0.5, -hb::kTableHeight * 0.5}),
+      WorldToScreen(view, {0.0, -hb::kTableHeight * 0.5}),
+      WorldToScreen(view, {hb::kTableWidth * 0.5, -hb::kTableHeight * 0.5}),
+      WorldToScreen(view, {-hb::kTableWidth * 0.5, hb::kTableHeight * 0.5}),
+      WorldToScreen(view, {0.0, hb::kTableHeight * 0.5}),
+      WorldToScreen(view, {hb::kTableWidth * 0.5, hb::kTableHeight * 0.5}),
+  };
+  for (int i = 0; i < 6; ++i) {
+    DrawPocketShape(view, i, pockets[i]);
+  }
+}
+
 void DrawTable(const View &view) {
   const float frameW = 16.0f * view.uiScale;
   const float cushionD = static_cast<float>(hb::kCushionNoseInset * view.scale);
   const float sideGap =
-      std::max(28.0f * view.uiScale,
-               static_cast<float>(hb::kSidePocketMouth * view.scale * 1.04f));
+      static_cast<float>(hb::kSidePocketMouth * 0.74 * view.scale);
   const float cornerGap =
-      std::max(22.0f * view.uiScale,
-               static_cast<float>(hb::kCornerPocketMouth * view.scale * 0.86f));
+      static_cast<float>(hb::kCornerPocketMouth * 0.74 * view.scale);
 
   Rectangle rail{view.play.x - frameW, view.play.y - frameW,
                  view.play.width + frameW * 2, view.play.height + frameW * 2};
@@ -477,31 +507,19 @@ void DrawTable(const View &view) {
   const float bottom = view.play.y + view.play.height;
   const float midX = view.play.x + view.play.width * 0.5f;
 
-  DrawHorizontalCushion(left + cornerGap, midX - sideGap * 0.5f, top,
-                        cushionD, true);
-  DrawHorizontalCushion(midX + sideGap * 0.5f, right - cornerGap, top,
-                        cushionD, true);
-  DrawHorizontalCushion(left + cornerGap, midX - sideGap * 0.5f, bottom,
-                        cushionD, false);
-  DrawHorizontalCushion(midX + sideGap * 0.5f, right - cornerGap, bottom,
-                        cushionD, false);
+  DrawHorizontalCushion(left + cornerGap, midX - sideGap, top, cushionD,
+                        true);
+  DrawHorizontalCushion(midX + sideGap, right - cornerGap, top, cushionD,
+                        true);
+  DrawHorizontalCushion(left + cornerGap, midX - sideGap, bottom, cushionD,
+                        false);
+  DrawHorizontalCushion(midX + sideGap, right - cornerGap, bottom, cushionD,
+                        false);
   DrawVerticalCushion(left, top + cornerGap, bottom - cornerGap, cushionD,
                       true);
   DrawVerticalCushion(right, top + cornerGap, bottom - cornerGap, cushionD,
                       false);
-  DrawRectangleLinesEx(view.play, 1.0f, {121, 154, 128, 90});
-
-  const Vector2 pockets[6] = {
-      WorldToScreen(view, {-hb::kTableWidth * 0.5, -hb::kTableHeight * 0.5}),
-      WorldToScreen(view, {0.0, -hb::kTableHeight * 0.5}),
-      WorldToScreen(view, {hb::kTableWidth * 0.5, -hb::kTableHeight * 0.5}),
-      WorldToScreen(view, {-hb::kTableWidth * 0.5, hb::kTableHeight * 0.5}),
-      WorldToScreen(view, {0.0, hb::kTableHeight * 0.5}),
-      WorldToScreen(view, {hb::kTableWidth * 0.5, hb::kTableHeight * 0.5}),
-  };
-  for (int i = 0; i < 6; ++i) {
-    DrawPocketShape(view, i, pockets[i]);
-  }
+  DrawRectangleLinesEx(view.play, 1.0f, {9, 32, 26, 130});
 
   const float spotR = 3.0f;
   DrawCircleV(WorldToScreen(view, {-hb::kTableWidth * 0.25, 0.0}), spotR,
@@ -851,6 +869,7 @@ void DrawGame(Game &game, const View &view) {
   for (const Ball &ball : game.world.Balls()) {
     DrawBall(game.font, view, ball);
   }
+  DrawPockets(view);
   DrawCueAndAim(game, view);
   if (game.phase == Phase::BallInHand) {
     const Vector2 p = WorldToScreen(view, game.world.CueBall().pos);

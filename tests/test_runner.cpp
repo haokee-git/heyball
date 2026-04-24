@@ -75,13 +75,46 @@ void TestPocket() {
   }
   auto &ball = world.Balls()[3];
   ball.pocketed = false;
-  ball.pos = {-hb::kTableWidth * 0.5 + 0.02, -hb::kTableHeight * 0.5 + 0.02};
+  ball.pos = {-hb::kTableWidth * 0.5 + 0.01, -hb::kTableHeight * 0.5 + 0.01};
   hb::ShotEvents events;
   world.Step(hb::kFixedStep, &events);
   Check(ball.sinking || ball.pocketed, "ball starts dropping in corner pocket");
   Check(events.potted.size() == 1 && events.potted[0] == 3, "pocket event recorded");
+  Check(world.IsMoving(), "sinking ball keeps world moving");
   StepFor(world, events, 0.6);
   Check(ball.pocketed, "ball finishes pocket animation");
+  Check(!world.IsMoving(), "world stops after pocket animation");
+}
+
+void TestSidePocketThroatCapturesBall() {
+  hb::PhysicsWorld world;
+  for (auto &b : world.Balls()) {
+    b.pocketed = true;
+  }
+  auto &ball = world.Balls()[8];
+  ball.pocketed = false;
+  ball.pos = {hb::kSidePocketMouth * 0.80,
+              hb::kTableHeight * 0.5 - hb::kCushionNoseInset * 1.25};
+  ball.vel = {0.0, 0.45};
+  hb::ShotEvents events;
+  world.Step(hb::kFixedStep, &events);
+  Check(ball.sinking || ball.pocketed, "side pocket throat captures ball");
+  Check(events.eightPocketed, "side pocket throat records eight ball");
+}
+
+void TestSidePocketDoesNotPullIdleBall() {
+  hb::PhysicsWorld world;
+  for (auto &b : world.Balls()) {
+    b.pocketed = true;
+  }
+  auto &ball = world.Balls()[8];
+  ball.pocketed = false;
+  ball.pos = {hb::kSidePocketMouth * 0.80,
+              hb::kTableHeight * 0.5 - hb::kCushionNoseInset * 1.25};
+  hb::ShotEvents events;
+  world.Step(hb::kFixedStep, &events);
+  Check(!ball.sinking && !ball.pocketed, "side pocket does not pull idle ball");
+  Check(!events.eightPocketed, "idle eight is not recorded as pocketed");
 }
 
 void TestRulesFoulGivesBallInHand() {
@@ -125,6 +158,25 @@ void TestEarlyEightLoses() {
   Check(rules.State().winner == 1, "early eight loses");
 }
 
+void TestEightAfterClearedGroupWins() {
+  hb::PhysicsWorld world;
+  hb::RulesEngine rules;
+  rules.State().currentPlayer = 1;
+  rules.State().breakShot = false;
+  rules.State().players[0].group = hb::BallGroup::Solids;
+  rules.State().players[1].group = hb::BallGroup::Stripes;
+  for (int n = 9; n <= 15; ++n) {
+    world.Balls()[n].pocketed = true;
+  }
+  hb::ShotEvents events;
+  events.firstContact = 8;
+  events.eightPocketed = true;
+  events.potted.push_back(8);
+  auto decision = rules.ApplyShot(events, world);
+  Check(decision.nextPhase == hb::Phase::RackOver, "cleared group eight ends rack");
+  Check(rules.State().winner == 1, "player two wins on legal eight");
+}
+
 } // namespace
 
 int main() {
@@ -132,9 +184,12 @@ int main() {
   TestRailBounce();
   TestFrictionStopsBall();
   TestPocket();
+  TestSidePocketThroatCapturesBall();
+  TestSidePocketDoesNotPullIdleBall();
   TestRulesFoulGivesBallInHand();
   TestRulesAssignsGroup();
   TestEarlyEightLoses();
+  TestEightAfterClearedGroupWins();
   std::cout << "All heyball tests passed\n";
   return 0;
 }
