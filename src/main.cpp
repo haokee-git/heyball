@@ -528,6 +528,9 @@ void DrawTable(const View &view) {
               {210, 220, 205, 85});
 }
 
+void DrawDetailedCue(Vector2 cueBall, Vector2 aimDir, float ballR,
+                     float power, const View &view);
+
 void DrawCueAndAim(const Game &game, const View &view) {
   if (game.phase != Phase::Aiming || game.world.CueBall().pocketed ||
       game.world.CueBall().sinking) {
@@ -542,11 +545,6 @@ void DrawCueAndAim(const Game &game, const View &view) {
   const Vector2 aimEnd = WorldToScreen(view, aimStop);
   const Vector2 dir{static_cast<float>(aim.x), static_cast<float>(aim.y)};
   const float ballR = static_cast<float>(hb::kBallRadius * view.scale);
-  const float retreat = static_cast<float>(22.0 + game.power * 118.0);
-  const Vector2 tip{cue.x - dir.x * (ballR + 4.0f),
-                    cue.y - dir.y * (ballR + 4.0f)};
-  const Vector2 butt{cue.x - dir.x * (ballR + retreat + 260.0f),
-                     cue.y - dir.y * (ballR + retreat + 260.0f)};
   DrawLineEx(cue, aimEnd, 1.0f,
              {214, 225, 210, 70});
   if (hasGhost) {
@@ -555,9 +553,7 @@ void DrawCueAndAim(const Game &game, const View &view) {
     DrawCircleLines(static_cast<int>(ghost.x), static_cast<int>(ghost.y), ghostR,
                     {236, 241, 228, 205});
   }
-  DrawLineEx(butt, tip, 5.0f, {178, 132, 78, 255});
-  DrawLineEx(butt, tip, 1.5f, {236, 219, 174, 255});
-  DrawCircleV(tip, 3.5f, {42, 70, 105, 255});
+  DrawDetailedCue(cue, dir, ballR, static_cast<float>(game.power), view);
 }
 
 Rectangle Button(Font font, Rectangle r, const char *text, bool active) {
@@ -586,6 +582,115 @@ void DrawTopStatus(Game &game) {
   DrawLineEx({pos.x, pos.y + sz.y + 3.0f * s},
              {pos.x + sz.x, pos.y + sz.y + 3.0f * s},
              1.0f, {93, 112, 101, 130});
+}
+
+Vector2 PointAlong(Vector2 a, Vector2 b, float t) {
+  return {a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t};
+}
+
+float LerpF(float a, float b, float t) {
+  return a + (b - a) * t;
+}
+
+void DrawTaperedSection(Vector2 a, Vector2 b, Vector2 normal, float widthA,
+                        float widthB, Color color) {
+  const Vector2 aL{a.x + normal.x * widthA * 0.5f,
+                   a.y + normal.y * widthA * 0.5f};
+  const Vector2 aR{a.x - normal.x * widthA * 0.5f,
+                   a.y - normal.y * widthA * 0.5f};
+  const Vector2 bL{b.x + normal.x * widthB * 0.5f,
+                   b.y + normal.y * widthB * 0.5f};
+  const Vector2 bR{b.x - normal.x * widthB * 0.5f,
+                   b.y - normal.y * widthB * 0.5f};
+  DrawTriangle(aL, aR, bR, color);
+  DrawTriangle(aL, bR, bL, color);
+}
+
+void DrawCueRing(Vector2 butt, Vector2 tip, Vector2 normal, float t1, float t2,
+                 float buttW, float tipW, Color color) {
+  const Vector2 a = PointAlong(butt, tip, t1);
+  const Vector2 b = PointAlong(butt, tip, t2);
+  DrawTaperedSection(a, b, normal, LerpF(buttW, tipW, t1),
+                     LerpF(buttW, tipW, t2), color);
+}
+
+void DrawCueInlay(Vector2 butt, Vector2 tip, Vector2 normal, float baseT,
+                  float pointT, float baseWidth, float offset, Color color) {
+  const Vector2 base = PointAlong(butt, tip, baseT);
+  const Vector2 point = PointAlong(butt, tip, pointT);
+  const Vector2 c{base.x + normal.x * offset, base.y + normal.y * offset};
+  const Vector2 a{c.x + normal.x * baseWidth * 0.5f,
+                  c.y + normal.y * baseWidth * 0.5f};
+  const Vector2 b{c.x - normal.x * baseWidth * 0.5f,
+                  c.y - normal.y * baseWidth * 0.5f};
+  DrawTriangle(a, b, point, color);
+}
+
+void DrawDetailedCue(Vector2 cueBall, Vector2 aimDir, float ballR,
+                     float power, const View &view) {
+  const Vector2 forward = Vector2Normalize(aimDir);
+  const Vector2 normal{-forward.y, forward.x};
+  const float cueLength = static_cast<float>(1.47 * view.scale);
+  const float pullback = static_cast<float>((10.0 + power * 118.0) * view.uiScale);
+  const float tipGap = (4.0f + pullback);
+  const Vector2 tip{cueBall.x - forward.x * (ballR + tipGap),
+                    cueBall.y - forward.y * (ballR + tipGap)};
+  const Vector2 butt{tip.x - forward.x * cueLength,
+                     tip.y - forward.y * cueLength};
+
+  const float tipW = std::max(3.0f, static_cast<float>(0.0108 * view.scale));
+  const float buttW = std::max(tipW * 2.25f, static_cast<float>(0.029 * view.scale));
+  const float collarW = LerpF(buttW, tipW, 0.40f);
+  const float shaftTipW = tipW * 0.92f;
+
+  DrawLineEx({butt.x + 2.0f * view.uiScale, butt.y + 2.0f * view.uiScale},
+             {tip.x + 2.0f * view.uiScale, tip.y + 2.0f * view.uiScale},
+             buttW * 1.05f, {0, 0, 0, 95});
+
+  DrawTaperedSection(PointAlong(butt, tip, 0.00f), PointAlong(butt, tip, 0.035f),
+                     normal, buttW * 0.96f, buttW * 0.92f, {12, 12, 11, 255});
+  DrawCueRing(butt, tip, normal, 0.035f, 0.048f, buttW, tipW,
+              {176, 166, 136, 255});
+  DrawTaperedSection(PointAlong(butt, tip, 0.048f), PointAlong(butt, tip, 0.315f),
+                     normal, LerpF(buttW, tipW, 0.048f),
+                     LerpF(buttW, tipW, 0.315f), {33, 22, 15, 255});
+  DrawCueRing(butt, tip, normal, 0.315f, 0.328f, buttW, tipW,
+              {201, 184, 139, 255});
+  DrawCueRing(butt, tip, normal, 0.338f, 0.346f, buttW, tipW,
+              {96, 63, 37, 255});
+  DrawCueRing(butt, tip, normal, 0.356f, 0.371f, buttW, tipW,
+              {192, 179, 148, 255});
+
+  DrawTaperedSection(PointAlong(butt, tip, 0.371f), PointAlong(butt, tip, 0.955f),
+                     normal, collarW, shaftTipW, {214, 171, 104, 255});
+
+  const float inlayW = buttW * 0.28f;
+  DrawCueInlay(butt, tip, normal, 0.105f, 0.365f, inlayW, -buttW * 0.28f,
+               {190, 133, 63, 230});
+  DrawCueInlay(butt, tip, normal, 0.145f, 0.390f, inlayW * 0.9f, 0.0f,
+               {226, 176, 92, 235});
+  DrawCueInlay(butt, tip, normal, 0.185f, 0.382f, inlayW, buttW * 0.28f,
+               {190, 133, 63, 230});
+  DrawCueInlay(butt, tip, normal, 0.225f, 0.405f, inlayW * 0.72f, 0.0f,
+               {62, 38, 23, 240});
+
+  for (int i = 0; i < 5; ++i) {
+    const float offset = (-0.30f + i * 0.15f) * collarW;
+    const Vector2 a = PointAlong(butt, tip, 0.40f);
+    const Vector2 b = PointAlong(butt, tip, 0.93f);
+    DrawLineEx({a.x + normal.x * offset, a.y + normal.y * offset},
+               {b.x + normal.x * offset * 0.48f, b.y + normal.y * offset * 0.48f},
+               0.8f * view.uiScale, {111, 71, 31, 70});
+  }
+
+  DrawCueRing(butt, tip, normal, 0.955f, 0.979f, buttW, tipW,
+              {215, 211, 196, 255});
+  DrawCueRing(butt, tip, normal, 0.979f, 1.0f, buttW, tipW,
+              {80, 50, 32, 255});
+  DrawLineEx(PointAlong(butt, tip, 0.41f), PointAlong(butt, tip, 0.945f),
+             std::max(1.0f, shaftTipW * 0.22f), {246, 220, 164, 120});
+  DrawLineEx(PointAlong(butt, tip, 0.065f), PointAlong(butt, tip, 0.30f),
+             std::max(1.0f, buttW * 0.16f), {91, 57, 30, 150});
 }
 
 void DrawUI(Game &game) {

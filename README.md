@@ -1,86 +1,35 @@
-# Heyball Raylib
+# 中式八球
 
-一个使用 raylib 和 C++17 制作的本地双人中式八球/Heyball 桌面游戏。画面采用纯黑背景、自绘无系统标题栏和正俯视 2.5D 球台，球体、数字、半色球色带和滚动贴花均为程序化绘制。
+这是一款本地双人对战的中式八球游戏。画面采用俯视球台，背景保持纯黑，重点放在球、球杆、袋口和每一次击球的手感上。
 
-## 当前功能
+游戏适合两名玩家轮流坐在同一台电脑前游玩。你们只需要一只鼠标，就可以完成瞄准、加力、出杆和自由球摆放。
 
-- 本地两名玩家轮流对战。
-- 规则按 WPA Heyball 2025 风格实现核心流程：开放球局、球组判定、合法进球继续、犯规自由球、8 号球胜负、45 秒计时和一次延时。
-- 鼠标拖动控制击球方向，滚轮下滑蓄力，滚轮上滑出杆。
-- 右上角击点盘支持高杆、低杆、左塞、右塞，默认中心击球。
-- 专用台球物理：固定步长、球-球碰撞、球-库碰撞、摩擦、旋转、库边塞效应、落袋判定和落袋动画。
-- 瞄准线会延伸到球台边框，并在目标球撞点处绘制白球空心圆位置提示。
-- 自绘黑色标题栏，与背景融合；支持拖动窗口和边缘/角落缩放；默认不打开控制台，使用 `--console` 或 `--debug-console` 才显示调试控制台。
-- 使用粗体等线字体和双线性过滤改善文字清晰度；球杆绘制在所有球之上，球号圆牌放大以便读取。
+## 怎么玩
 
-## 构建
+两名玩家轮流击球。开局后先保持开放球局，进球后根据规则确定全色球和半色球归属。清完自己的球组后，合法打进 8 号球即可获胜。
 
-项目要求使用 MSYS2 UCRT64 工具链，不使用系统 PATH 中的其它 `g++`。
+游戏会在顶部显示当前击球玩家和目标球组。发生犯规、换手、自由球或胜负判定时，底部会给出提示。
 
-```powershell
-D:\msys64\ucrt64\bin\cmake.exe -S . -B build/ucrt64-debug -G Ninja -DCMAKE_CXX_COMPILER=D:/msys64/ucrt64/bin/g++.exe -DCMAKE_MAKE_PROGRAM=D:/msys64/ucrt64/bin/ninja.exe
-D:\msys64\ucrt64\bin\cmake.exe --build build/ucrt64-debug
-```
+## 操作
 
-构建会生成：
+- 移动鼠标：调整击球方向。
+- 鼠标滚轮向下：蓄力，球杆会向后撤。
+- 鼠标滚轮向上：出杆击球。
+- 右上角击点盘：选择高杆、低杆、左塞或右塞。
+- 还原：把击点恢复到中心。
+- 重新摆球：开始一局新的摆球。
+- 自由球时移动鼠标：摆放白球，左键确认。
 
-- `build/ucrt64-debug/heyball.exe`
-- `build/ucrt64-debug/heyball_tests.exe`
+## 球台与物理
 
-构建后会自动复制 `glfw3.dll` 到主程序输出目录。
+球台按照中式八球比例制作，球、袋口和库边都使用真实尺寸换算。球与球、球与库边之间有碰撞、摩擦、滚动和旋转影响。
 
-## 运行
+袋口不是简单的圆形判定。球进入袋口喉部时会进入落袋动画，停在袋口附近的球不会无故被吸进去。
 
-```powershell
-.\build\ucrt64-debug\heyball.exe
-```
+## 视觉
 
-带调试控制台运行：
+每颗球都是程序绘制的立体投影。全色球、半色球、数字贴花、滚动相位和高光都会随运动变化。球杆是侧视的细长木质球杆，会在蓄力时整体后撤。
 
-```powershell
-.\build\ucrt64-debug\heyball.exe --console
-```
+## 提醒
 
-## 测试
-
-```powershell
-.\build\ucrt64-debug\heyball_tests.exe
-```
-
-测试覆盖基础球-球碰撞、库边反弹、摩擦停球、落袋事件和若干规则判定。
-
-## 规格与比例
-
-- 台面：`2540 x 1260mm`
-- 球直径：`57.15mm`
-- 角袋口：约 `76.2mm`
-- 腰袋口：约 `82.5mm`
-
-这些比例用于让中式/Heyball 的窄袋和标准球尺寸在画面与物理中保持协调。
-
-## Release build
-
-Release builds use the same fixed MSYS2 UCRT64 toolchain and write to
-`build/ucrt64-release`.
-
-```powershell
-D:\msys64\ucrt64\bin\cmake.exe --preset ucrt64-release
-D:\msys64\ucrt64\bin\cmake.exe --build --preset ucrt64-release
-```
-
-Generated files:
-
-- `build/ucrt64-release/heyball.exe`
-- `build/ucrt64-release/heyball_tests.exe`
-
-Run the Release build:
-
-```powershell
-.\build\ucrt64-release\heyball.exe
-```
-
-## 当前调校重点
-
-- 继续优化袋口旁边库边曲线、角袋/中袋 jaws 和袋口拒球表现。
-- 继续调校高低杆、左右塞、旋转转移和库边反弹手感。
-- 补充更多 WPA Heyball 2025 规则边角案例与整局手动验收。
+这仍然是一个正在调校手感的版本。袋口拒球、库边曲线、旋转转移和规则边角情况还会继续打磨。

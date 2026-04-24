@@ -1,6 +1,0 @@
-D:/heyball/build/ucrt64-debug/CMakeFiles/heyball_core.dir
-D:/heyball/build/ucrt64-debug/CMakeFiles/heyball.dir
-D:/heyball/build/ucrt64-debug/CMakeFiles/heyball_tests.dir
-D:/heyball/build/ucrt64-debug/CMakeFiles/test.dir
-D:/heyball/build/ucrt64-debug/CMakeFiles/edit_cache.dir
-D:/heyball/build/ucrt64-debug/CMakeFiles/rebuild_cache.dir
