@@ -777,89 +777,99 @@ void DrawDetailedCue(Vector2 cueBall, Vector2 aimDir, float ballR,
 
   const float s = static_cast<float>(view.scale);
   const float us = view.uiScale;
-  const float cueLen = std::min(s * 1.38f, 1850.0f);
+  const float cueLen = std::min(s * 1.47f, 1900.0f);
   const float gap = ballR + 4.0f * us + (10.0f + power * 118.0f) * us;
   const float tipX = cueBall.x - forward.x * gap;
   const float tipY = cueBall.y - forward.y * gap;
   const float buttX = tipX - forward.x * cueLen;
   const float buttY = tipY - forward.y * cueLen;
 
-  const float tw = std::max(14.0f * us, 0.038f * s);
-  const float bw = std::max(std::max(tw * 2.8f, 0.082f * s), 35.0f * us);
+  // Realistic widths: butt 31mm, joint 21mm, tip 13mm (scaled to screen)
+  const float tw = std::max(13.0f * us, 0.032f * s);
+  const float bw = std::max(std::max(tw * 2.8f, 0.080f * s), 38.0f * us);
+  const float jt_t = 0.45f;  // joint position
+  const float jw = bw + (tw - bw) * jt_t * 0.65f;
 
   const auto At = [&](float t) -> Vector2 {
     return {buttX + (tipX - buttX) * t, buttY + (tipY - buttY) * t};
   };
-  const auto W = [&](float t) -> float { return bw + (tw - bw) * t; };
+  // Butt width: slight taper from bw to jw
+  const auto BW = [&](float t) -> float { return bw + (jw - bw) * (t / jt_t); };
+  // Shaft width: taper from jw to tw
+  const auto SW = [&](float t) -> float {
+    if (t <= jt_t) return jw;
+    return jw + (tw - jw) * ((t - jt_t) / (0.96f - jt_t));
+  };
 
-  BeginBlendMode(BLEND_CUSTOM);
-  rlSetBlendFactors(RL_ONE, RL_ZERO, RL_FUNC_ADD);
+  // --- drawing ---
+  BeginBlendMode(BLEND_ALPHA);
 
   // shadow
-  const float sx = 4.0f * us;
-  const float sy = 4.5f * us;
+  const float sx = 4.5f * us;
+  const float sy = 5.0f * us;
   DrawTaperedSection({buttX + sx, buttY + sy}, {tipX + sx, tipY + sy},
-                     perp, bw * 1.16f, tw * 1.16f, {0, 0, 0, 96});
+                     perp, bw * 1.14f, tw * 1.14f, {0, 0, 0, 80});
 
-  // full-length base
-  DrawTaperedSection(At(0.00f), At(1.00f), perp, bw, tw,
-                     {162, 128, 76, 255});
+  // shaft: full-length maple base (butt will cover rear)
+  DrawTaperedSection(At(jt_t), At(0.96f), perp, SW(jt_t), SW(0.96f),
+                     {232, 216, 182, 255});
 
-  // butt hardwood (rear ~47%)
-  DrawTaperedSection(At(0.00f), At(0.47f), perp, W(0.00f) + 1.8f * us,
-                     W(0.47f) + 1.4f * us, {76, 40, 19, 255});
+  // butt: dark hardwood (ebony/rosewood)
+  DrawTaperedSection(At(0.02f), At(jt_t), perp, BW(0.02f), BW(jt_t),
+                     {56, 28, 12, 255});
 
-  // butt cap
-  const float capW = bw * 1.12f;
-  DrawTaperedSection(At(0.000f), At(0.016f), perp, capW + 1.5f * us, capW,
-                     {22, 10, 4, 255});
-  DrawTaperedSection(At(0.014f), At(0.028f), perp, capW, W(0.028f),
-                     {192, 165, 107, 255});
+  // bumper (black rubber)
+  DrawTaperedSection(At(0.000f), At(0.023f), perp, bw * 1.08f, BW(0.023f),
+                     {16, 14, 13, 255});
+  // bumper ring
+  DrawTaperedSection(At(0.022f), At(0.032f), perp, BW(0.022f) + 2.2f * us,
+                     BW(0.032f) + 1.8f * us, {190, 166, 120, 255});
 
-  // decorative ring A
-  DrawTaperedSection(At(0.088f), At(0.102f), perp, W(0.088f) + 2.8f * us,
-                     W(0.102f) + 2.8f * us, {210, 195, 150, 255});
-  // decorative ring B
-  DrawTaperedSection(At(0.146f), At(0.160f), perp, W(0.146f) + 2.8f * us,
-                     W(0.160f) + 2.8f * us, {210, 195, 150, 255});
-  // decorative ring C
-  DrawTaperedSection(At(0.204f), At(0.218f), perp, W(0.204f) + 2.8f * us,
-                     W(0.218f) + 2.8f * us, {210, 195, 150, 255});
+  // linen grip wrap (15%-30% of butt)
+  DrawTaperedSection(At(0.14f), At(0.30f), perp, BW(0.14f) + 0.5f * us,
+                     BW(0.30f) + 0.5f * us, {42, 38, 34, 255});
+  // grip top border
+  DrawTaperedSection(At(0.14f), At(0.148f), perp, BW(0.14f) + 2.0f * us,
+                     BW(0.148f) + 2.0f * us, {186, 162, 115, 255});
+  // grip bottom border
+  DrawTaperedSection(At(0.292f), At(0.30f), perp, BW(0.292f) + 2.0f * us,
+                     BW(0.30f) + 2.0f * us, {186, 162, 115, 255});
 
-  // joint accent dark rings
-  DrawTaperedSection(At(0.34f), At(0.352f), perp, W(0.34f) + 3.0f * us,
-                     W(0.352f) + 3.0f * us, {42, 22, 10, 255});
-  DrawTaperedSection(At(0.396f), At(0.408f), perp, W(0.396f) + 3.0f * us,
-                     W(0.408f) + 3.0f * us, {42, 22, 10, 255});
-  // joint brass collar
-  DrawTaperedSection(At(0.35f), At(0.40f), perp, W(0.35f) + 3.5f * us,
-                     W(0.40f) + 3.5f * us, {178, 152, 102, 255});
+  // decorative brass rings on butt
+  DrawTaperedSection(At(0.055f), At(0.067f), perp, BW(0.055f) + 2.4f * us,
+                     BW(0.067f) + 2.4f * us, {212, 193, 146, 255});
+  DrawTaperedSection(At(0.095f), At(0.107f), perp, BW(0.095f) + 2.4f * us,
+                     BW(0.107f) + 2.4f * us, {212, 193, 146, 255});
 
-  // shaft maple overlay (front ~58%)
-  DrawTaperedSection(At(0.42f), At(0.96f), perp, W(0.42f), W(0.96f),
-                     {242, 218, 156, 255});
+  // joint collar (stainless steel)
+  DrawTaperedSection(At(jt_t - 0.015f), At(jt_t), perp,
+                     BW(jt_t - 0.015f) + 3.0f * us,
+                     BW(jt_t) + 3.5f * us, {195, 191, 184, 255});
+  DrawTaperedSection(At(jt_t - 0.02f), At(jt_t - 0.013f), perp,
+                     BW(jt_t - 0.02f) + 2.8f * us,
+                     BW(jt_t - 0.013f) + 2.8f * us, {44, 26, 16, 255});
 
   // shaft grain lines
   for (int g = -1; g <= 1; g += 2) {
-    const float gOff = g * W(0.50f) * 0.18f;
-    const Vector2 sa = {At(0.43f).x + perp.x * gOff,
-                        At(0.43f).y + perp.y * gOff};
-    const Vector2 sb = {At(0.94f).x + perp.x * gOff * 0.48f,
-                        At(0.94f).y + perp.y * gOff * 0.48f};
-    DrawLineEx(sa, sb, std::max(0.8f, us * 0.95f), {172, 126, 68, 255});
+    const float gOff = g * SW(0.55f) * 0.16f;
+    const Vector2 sa = {At(0.50f).x + perp.x * gOff,
+                        At(0.50f).y + perp.y * gOff};
+    const Vector2 sb = {At(0.93f).x + perp.x * gOff * 0.35f,
+                        At(0.93f).y + perp.y * gOff * 0.35f};
+    DrawLineEx(sa, sb, std::max(0.7f, us * 0.9f), {195, 171, 120, 200});
   }
 
-  // ferrule
-  DrawTaperedSection(At(0.96f), At(0.986f), perp, W(0.96f) + 1.0f * us,
-                     W(0.986f) + 0.3f * us, {236, 232, 220, 255});
+  // ferrule (ivory white)
+  DrawTaperedSection(At(0.96f), At(0.985f), perp, SW(0.96f) + 0.7f * us,
+                     SW(0.985f) + 0.2f * us, {238, 234, 225, 255});
 
-  // tip
-  DrawTaperedSection(At(0.986f), At(1.00f), perp, W(0.986f) * 0.90f,
-                     W(1.00f) * 0.68f, {68, 46, 28, 255});
+  // tip (dark leather)
+  DrawTaperedSection(At(0.985f), At(1.00f), perp, SW(0.985f) * 0.88f,
+                     SW(1.00f) * 0.65f, {54, 36, 22, 255});
 
-  // centerline reflection
-  DrawLineEx(At(0.025f), At(0.94f),
-             std::max(1.4f, tw * 0.26f), {252, 243, 218, 255});
+  // center gloss line
+  DrawLineEx(At(0.05f), At(0.95f),
+             std::max(1.3f, tw * 0.23f), {252, 244, 226, 140});
 
   EndBlendMode();
 }
