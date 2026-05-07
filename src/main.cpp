@@ -2,7 +2,6 @@
 
 #include <raylib.h>
 #include <raymath.h>
-#include <rlgl.h>
 
 #include <algorithm>
 #include <array>
@@ -802,8 +801,6 @@ void DrawDetailedCue(Vector2 cueBall, Vector2 aimDir, float ballR,
   };
 
   // --- drawing ---
-  BeginBlendMode(BLEND_ALPHA);
-
   // shadow
   const float sx = 4.5f * us;
   const float sy = 5.0f * us;
@@ -870,8 +867,6 @@ void DrawDetailedCue(Vector2 cueBall, Vector2 aimDir, float ballR,
   // center gloss line
   DrawLineEx(At(0.05f), At(0.95f),
              std::max(1.3f, tw * 0.23f), {252, 244, 226, 140});
-
-  EndBlendMode();
 }
 
 void DrawUI(Game &game) {
