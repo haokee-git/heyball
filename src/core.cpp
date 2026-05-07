@@ -9,8 +9,8 @@ namespace {
 constexpr double kRestitutionBall = 0.965;
 constexpr double kRestitutionRail = 0.780;
 constexpr double kGravity = 9.80665;
-constexpr double kSlideMu = 0.145;
-constexpr double kRollDrag = 0.055;
+constexpr double kSlideMu = 0.245;
+constexpr double kRollDrag = 0.090;
 constexpr double kSideDecay = 0.42;
 constexpr double kCueMaxSpeed = 4.85;
 constexpr double kRailGrip = 0.34;
@@ -424,9 +424,8 @@ void PhysicsWorld::StrikeCue(const ShotParams &shot) {
   cue.vel += aim * speed;
 
   const Vec2 rollAxis = Perp(aim);
-  cue.rollOmega += rollAxis * (shot.tipY * speed * 1.6 / kBallRadius);
-  cue.rollOmega += rollAxis * (0.35 * speed / kBallRadius);
-  cue.sideOmega += shot.tipX * speed * 9.0;
+  cue.rollOmega += rollAxis * (shot.tipY * speed * 1.8 / kBallRadius);
+  cue.sideOmega += shot.tipX * speed * 5.5;
 }
 
 bool PhysicsWorld::IsMoving(double threshold) const {
@@ -570,12 +569,35 @@ void PhysicsWorld::ApplyFriction(Ball &ball, double dt) {
   }
 }
 
+bool CcdSweptSpheres(Vec2 a0, Vec2 b0, Vec2 va, Vec2 vb, double dt, Vec2 &hitA, Vec2 &hitB) {
+  const Vec2 p = a0 - b0;
+  const Vec2 v = (va - vb) * dt;
+  const double a = Dot(v, v);
+  if (a < 1e-12) {
+    return false;
+  }
+  const double b = 2.0 * Dot(p, v);
+  const double c = Dot(p, p) - kBallDiameter * kBallDiameter;
+  const double disc = b * b - 4.0 * a * c;
+  if (disc < 0.0) {
+    return false;
+  }
+  const double t = (-b - std::sqrt(disc)) / (2.0 * a);
+  if (t < 0.0 || t > 1.0) {
+    return false;
+  }
+  hitA = a0 + va * dt * t;
+  hitB = b0 + vb * dt * t;
+  return true;
+}
+
 void PhysicsWorld::ResolveBallContacts(ShotEvents *events) {
   for (int i = 0; i < 16; ++i) {
     Ball &a = balls_[i];
     if (a.pocketed || a.sinking) {
       continue;
     }
+    const Vec2 aPrev = a.pos - a.vel * kFixedStep;
     for (int j = i + 1; j < 16; ++j) {
       Ball &b = balls_[j];
       if (b.pocketed || b.sinking) {
@@ -587,9 +609,23 @@ void PhysicsWorld::ResolveBallContacts(ShotEvents *events) {
         delta = {1.0, 0.0};
         dist = 1.0;
       }
-      const double overlap = kBallDiameter - dist;
+      double overlap = kBallDiameter - dist;
       if (overlap <= 0.0) {
-        continue;
+        const Vec2 bPrev = b.pos - b.vel * kFixedStep;
+        Vec2 hitA, hitB;
+        if (CcdSweptSpheres(aPrev, bPrev, a.vel, b.vel, kFixedStep, hitA, hitB)) {
+          a.pos = hitA;
+          b.pos = hitB;
+          delta = hitB - hitA;
+          dist = Length(delta);
+          if (dist < 1e-8) {
+            delta = {1.0, 0.0};
+            dist = 1.0;
+          }
+          overlap = 0.0002;
+        } else {
+          continue;
+        }
       }
       const Vec2 n = delta / dist;
       const Vec2 correction = n * (overlap * 0.52);
@@ -606,8 +642,8 @@ void PhysicsWorld::ResolveBallContacts(ShotEvents *events) {
         const Vec2 t = Perp(n);
         const double tangentSpeed =
             Dot(rel, t) - (a.sideOmega + b.sideOmega) * kBallRadius;
-        double jt = -tangentSpeed / 7.0;
-        const double maxTangent = std::abs(jn) * 0.22;
+        double jt = -tangentSpeed / 18.0;
+        const double maxTangent = std::abs(jn) * 0.04;
         jt = Clamp(jt, -maxTangent, maxTangent);
         a.vel -= t * jt;
         b.vel += t * jt;

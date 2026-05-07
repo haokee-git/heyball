@@ -1,11 +1,12 @@
 # ninja log v7
-4	322	7998262690245942	CMakeFiles/heyball.dir/generated/resources.rc.obj	9f909da6c8d0570d
-4	936	7998262690255915	CMakeFiles/heyball_tests.dir/tests/test_runner.cpp.obj	e378bb5ab54d3bb2
-2	1101	7998262690235943	CMakeFiles/heyball_core.dir/src/core.cpp.obj	6cadc58d2ddf6cfc
-3	1137	7998262690235943	CMakeFiles/heyball.dir/src/main.cpp.obj	a7a1cbc19ab34048
-1101	1277	7998262701225935	libheyball_core.a	a03868fde6b8545
-1278	1919	7998262702985904	heyball_tests.exe	4433fe8cbc8fe3cc
-4	589	7998264028950488	heyball.exe	41c1187a81d4c39d
 5	53	7998266871843341	CMakeFiles/heyball.dir/generated/resources.rc.obj	9f909da6c8d0570d
-4	626	7998266871833334	CMakeFiles/heyball.dir/src/main.cpp.obj	a7a1cbc19ab34048
-626	1067	7998266878053328	heyball.exe	41c1187a81d4c39d
+4	936	7998262690255915	CMakeFiles/heyball_tests.dir/tests/test_runner.cpp.obj	e378bb5ab54d3bb2
+4	687	7998280069754800	CMakeFiles/heyball_core.dir/src/core.cpp.obj	6cadc58d2ddf6cfc
+4	609	7998297085626114	CMakeFiles/heyball.dir/src/main.cpp.obj	a7a1cbc19ab34048
+688	750	7998280076584789	libheyball_core.a	a03868fde6b8545
+750	933	7998280077214767	heyball_tests.exe	4433fe8cbc8fe3cc
+656	1072	7998297092146106	heyball.exe	41c1187a81d4c39d
+5	613	7998385454183620	CMakeFiles/heyball_core.dir/src/core.cpp.obj	6cadc58d2ddf6cfc
+614	674	7998385460274068	libheyball_core.a	a03868fde6b8545
+674	943	7998385460879950	heyball_tests.exe	4433fe8cbc8fe3cc
+674	1420	7998385460869949	heyball.exe	41c1187a81d4c39d

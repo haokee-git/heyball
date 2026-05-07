@@ -1,7 +1,8 @@
-#include "core.hpp"
+﻿#include "core.hpp"
 
 #include <raylib.h>
 #include <raymath.h>
+#include <rlgl.h>
 
 #include <algorithm>
 #include <array>
@@ -689,6 +690,7 @@ void DrawCueAndAim(const Game &game, const View &view) {
   const Vector2 aimEnd = WorldToScreen(view, aimStop);
   const Vector2 dir{static_cast<float>(aim.x), static_cast<float>(aim.y)};
   const float ballR = static_cast<float>(hb::kBallRadius * view.scale);
+  DrawDetailedCue(cue, dir, ballR, static_cast<float>(game.power), view);
   DrawLineEx(cue, aimEnd, 1.0f,
              {214, 225, 210, 70});
   if (hasGhost) {
@@ -697,7 +699,6 @@ void DrawCueAndAim(const Game &game, const View &view) {
     DrawCircleLines(static_cast<int>(ghost.x), static_cast<int>(ghost.y), ghostR,
                     {236, 241, 228, 205});
   }
-  DrawDetailedCue(cue, dir, ballR, static_cast<float>(game.power), view);
 }
 
 Rectangle Button(Font font, Rectangle r, const char *text, bool active) {
@@ -752,14 +753,6 @@ Rectangle HelpWindowRect(float s) {
   return {108.0f * s, 54.0f * s, 520.0f * s, 314.0f * s};
 }
 
-Vector2 PointAlong(Vector2 a, Vector2 b, float t) {
-  return {a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t};
-}
-
-float LerpF(float a, float b, float t) {
-  return a + (b - a) * t;
-}
-
 void DrawTaperedSection(Vector2 a, Vector2 b, Vector2 normal, float widthA,
                         float widthB, Color color) {
   const Vector2 aL{a.x + normal.x * widthA * 0.5f,
@@ -774,116 +767,100 @@ void DrawTaperedSection(Vector2 a, Vector2 b, Vector2 normal, float widthA,
   DrawTriangle(aL, bR, bL, color);
 }
 
-void DrawCueRing(Vector2 butt, Vector2 tip, Vector2 normal, float t1, float t2,
-                 float buttW, float tipW, Color color) {
-  const Vector2 a = PointAlong(butt, tip, t1);
-  const Vector2 b = PointAlong(butt, tip, t2);
-  DrawTaperedSection(a, b, normal, LerpF(buttW, tipW, t1),
-                     LerpF(buttW, tipW, t2), color);
-}
 
-void DrawCueInlay(Vector2 butt, Vector2 tip, Vector2 normal, float baseT,
-                  float pointT, float baseWidth, float offset, Color color) {
-  const Vector2 base = PointAlong(butt, tip, baseT);
-  const Vector2 point = PointAlong(butt, tip, pointT);
-  const Vector2 c{base.x + normal.x * offset, base.y + normal.y * offset};
-  const Vector2 a{c.x + normal.x * baseWidth * 0.5f,
-                  c.y + normal.y * baseWidth * 0.5f};
-  const Vector2 b{c.x - normal.x * baseWidth * 0.5f,
-                  c.y - normal.y * baseWidth * 0.5f};
-  DrawTriangle(a, b, point, color);
-}
 
 void DrawDetailedCue(Vector2 cueBall, Vector2 aimDir, float ballR,
                      float power, const View &view) {
   const Vector2 forward = Vector2Normalize(aimDir);
-  const Vector2 normal{-forward.y, forward.x};
-  const float cueLength = static_cast<float>(1.18 * view.scale);
-  const float pullback = static_cast<float>((10.0 + power * 118.0) * view.uiScale);
-  const float tipGap = (4.0f + pullback);
-  const Vector2 tip{cueBall.x - forward.x * (ballR + tipGap),
-                    cueBall.y - forward.y * (ballR + tipGap)};
-  const Vector2 butt{tip.x - forward.x * cueLength,
-                     tip.y - forward.y * cueLength};
+  if (forward.x == 0.0f && forward.y == 0.0f) return;
+  const Vector2 perp{-forward.y, forward.x};
 
-  const float tipW =
-      std::max(8.2f * view.uiScale, static_cast<float>(0.020 * view.scale));
-  const float buttW = std::max(
-      std::max(tipW * 2.45f, static_cast<float>(0.056 * view.scale)),
-      20.0f * view.uiScale);
-  const float collarW = LerpF(buttW, tipW, 0.40f);
-  const float shaftTipW = tipW * 1.02f;
+  const float s = static_cast<float>(view.scale);
+  const float us = view.uiScale;
+  const float cueLen = std::min(s * 1.35f, 1800.0f);
+  const float gap = ballR + 4.0f * us + (10.0f + power * 118.0f) * us;
+  const float tipX = cueBall.x - forward.x * gap;
+  const float tipY = cueBall.y - forward.y * gap;
+  const float buttX = tipX - forward.x * cueLen;
+  const float buttY = tipY - forward.y * cueLen;
 
-  const Vector2 castShadow{2.6f * view.uiScale, 3.1f * view.uiScale};
-  DrawTaperedSection({butt.x + castShadow.x, butt.y + castShadow.y},
-                     {tip.x + castShadow.x, tip.y + castShadow.y},
-                     normal, buttW * 1.16f, tipW * 1.16f, {0, 0, 0, 86});
-  DrawTaperedSection({butt.x + castShadow.x * 0.45f, butt.y + castShadow.y * 0.45f},
-                     {tip.x + castShadow.x * 0.45f, tip.y + castShadow.y * 0.45f},
-                     normal, buttW * 1.06f, tipW * 1.06f, {0, 0, 0, 112});
-  DrawTaperedSection(butt, tip, normal, buttW * 1.04f, tipW * 1.04f,
-                     {7, 8, 7, 255});
+  const float tw = std::max(11.0f * us, 0.030f * s);
+  const float bw = std::max(std::max(tw * 2.8f, 0.066f * s), 28.0f * us);
 
-  DrawTaperedSection(PointAlong(butt, tip, 0.00f), PointAlong(butt, tip, 0.035f),
-                     normal, buttW * 0.96f, buttW * 0.92f, {12, 12, 11, 255});
-  DrawCueRing(butt, tip, normal, 0.035f, 0.048f, buttW, tipW,
-              {176, 166, 136, 255});
-  DrawTaperedSection(PointAlong(butt, tip, 0.048f), PointAlong(butt, tip, 0.315f),
-                     normal, LerpF(buttW, tipW, 0.048f),
-                     LerpF(buttW, tipW, 0.315f), {33, 22, 15, 255});
-  DrawCueRing(butt, tip, normal, 0.315f, 0.328f, buttW, tipW,
-              {201, 184, 139, 255});
-  DrawCueRing(butt, tip, normal, 0.338f, 0.346f, buttW, tipW,
-              {96, 63, 37, 255});
-  DrawCueRing(butt, tip, normal, 0.356f, 0.371f, buttW, tipW,
-              {192, 179, 148, 255});
+  const auto At = [&](float t) -> Vector2 {
+    return {buttX + (tipX - buttX) * t, buttY + (tipY - buttY) * t};
+  };
+  const auto W = [&](float t) -> float { return bw + (tw - bw) * t; };
 
-  DrawTaperedSection(PointAlong(butt, tip, 0.371f), PointAlong(butt, tip, 0.955f),
-                     normal, collarW, shaftTipW, {214, 171, 104, 255});
+  // force opaque blend: GL_ONE / GL_ZERO → no blending
+  BeginBlendMode(BLEND_CUSTOM);
+  rlSetBlendFactors(RL_ONE, RL_ZERO, RL_FUNC_ADD);
 
-  DrawLineEx({PointAlong(butt, tip, 0.060f).x - normal.x * buttW * 0.22f,
-              PointAlong(butt, tip, 0.060f).y - normal.y * buttW * 0.22f},
-             {PointAlong(butt, tip, 0.305f).x - normal.x * buttW * 0.16f,
-              PointAlong(butt, tip, 0.305f).y - normal.y * buttW * 0.16f},
-             std::max(1.0f, buttW * 0.13f), {10, 7, 5, 255});
-  DrawLineEx({PointAlong(butt, tip, 0.385f).x - normal.x * collarW * 0.20f,
-              PointAlong(butt, tip, 0.385f).y - normal.y * collarW * 0.20f},
-             {PointAlong(butt, tip, 0.940f).x - normal.x * shaftTipW * 0.24f,
-              PointAlong(butt, tip, 0.940f).y - normal.y * shaftTipW * 0.24f},
-             std::max(1.0f, shaftTipW * 0.20f), {138, 91, 44, 255});
-  DrawLineEx({PointAlong(butt, tip, 0.390f).x + normal.x * collarW * 0.18f,
-              PointAlong(butt, tip, 0.390f).y + normal.y * collarW * 0.18f},
-             {PointAlong(butt, tip, 0.935f).x + normal.x * shaftTipW * 0.22f,
-              PointAlong(butt, tip, 0.935f).y + normal.y * shaftTipW * 0.22f},
-             std::max(1.0f, shaftTipW * 0.14f), {246, 219, 162, 255});
+  // --- shadow (pre-blended dark overlay, drawn as solid dark) ---
+  const float sx = 3.5f * us;
+  const float sy = 4.0f * us;
+  DrawTaperedSection({buttX + sx, buttY + sy}, {tipX + sx, tipY + sy},
+                     perp, bw * 1.14f, tw * 1.14f, {0, 0, 0, 96});
 
-  const float inlayW = buttW * 0.28f;
-  DrawCueInlay(butt, tip, normal, 0.105f, 0.365f, inlayW, -buttW * 0.28f,
-               {190, 133, 63, 255});
-  DrawCueInlay(butt, tip, normal, 0.145f, 0.390f, inlayW * 0.9f, 0.0f,
-               {226, 176, 92, 255});
-  DrawCueInlay(butt, tip, normal, 0.185f, 0.382f, inlayW, buttW * 0.28f,
-               {190, 133, 63, 255});
-  DrawCueInlay(butt, tip, normal, 0.225f, 0.405f, inlayW * 0.72f, 0.0f,
-               {62, 38, 23, 255});
+  // --- main body (one-piece tapered from butt to tip) ---
+  DrawTaperedSection(At(0.00f), At(1.00f), perp, bw, tw,
+                     {168, 132, 78, 255});
 
-  for (int i = 0; i < 3; ++i) {
-    const float offset = (-0.18f + i * 0.18f) * collarW;
-    const Vector2 a = PointAlong(butt, tip, 0.40f);
-    const Vector2 b = PointAlong(butt, tip, 0.93f);
-    DrawLineEx({a.x + normal.x * offset, a.y + normal.y * offset},
-               {b.x + normal.x * offset * 0.48f, b.y + normal.y * offset * 0.48f},
-               0.85f * view.uiScale, {111, 71, 31, 115});
+  // butt dark section (overlay on rear half)
+  DrawTaperedSection(At(0.00f), At(0.49f), perp, W(0.00f) + 1.4f * us,
+                     W(0.49f) + 1.0f * us, {72, 38, 18, 255});
+
+  // butt cap
+  const float capRim = bw * 1.10f;
+  DrawTaperedSection(At(0.000f), At(0.018f), perp, capRim + 1.2f * us, capRim,
+                     {28, 12, 5, 255});
+  DrawTaperedSection(At(0.016f), At(0.030f), perp, capRim, W(0.030f),
+                     {188, 163, 105, 255});
+
+  // decorative rings
+  DrawTaperedSection(At(0.090f), At(0.104f), perp, W(0.090f) + 2.4f * us,
+                     W(0.104f) + 2.4f * us, {205, 192, 148, 255});
+  DrawTaperedSection(At(0.148f), At(0.161f), perp, W(0.148f) + 2.4f * us,
+                     W(0.161f) + 2.4f * us, {205, 192, 148, 255});
+  DrawTaperedSection(At(0.202f), At(0.215f), perp, W(0.202f) + 2.4f * us,
+                     W(0.215f) + 2.4f * us, {205, 192, 148, 255});
+
+  // joint collar
+  DrawTaperedSection(At(0.34f), At(0.38f), perp, W(0.34f) + 3.2f * us,
+                     W(0.38f) + 3.2f * us, {175, 148, 99, 255});
+  DrawTaperedSection(At(0.33f), At(0.344f), perp, W(0.33f) + 2.6f * us,
+                     W(0.344f) + 2.6f * us, {48, 26, 12, 255});
+  DrawTaperedSection(At(0.376f), At(0.384f), perp, W(0.376f) + 2.6f * us,
+                     W(0.384f) + 2.6f * us, {48, 26, 12, 255});
+
+  // shaft highlight (lighter overlay on front half)
+  DrawTaperedSection(At(0.38f), At(0.96f), perp, W(0.38f), W(0.96f),
+                     {238, 214, 152, 255});
+
+  // shaft grain lines
+  for (int g = -1; g <= 1; g += 2) {
+    const float gOff = g * W(0.50f) * 0.20f;
+    const Vector2 sa = {At(0.40f).x + perp.x * gOff,
+                        At(0.40f).y + perp.y * gOff};
+    const Vector2 sb = {At(0.93f).x + perp.x * gOff * 0.50f,
+                        At(0.93f).y + perp.y * gOff * 0.50f};
+    DrawLineEx(sa, sb, std::max(0.8f, us * 0.9f), {168, 122, 64, 255});
   }
 
-  DrawCueRing(butt, tip, normal, 0.955f, 0.979f, buttW, tipW,
-              {215, 211, 196, 255});
-  DrawCueRing(butt, tip, normal, 0.979f, 1.0f, buttW, tipW,
-              {80, 50, 32, 255});
-  DrawLineEx(PointAlong(butt, tip, 0.41f), PointAlong(butt, tip, 0.945f),
-             std::max(1.0f, shaftTipW * 0.18f), {246, 220, 164, 230});
-  DrawLineEx(PointAlong(butt, tip, 0.065f), PointAlong(butt, tip, 0.30f),
-             std::max(1.0f, buttW * 0.14f), {91, 57, 30, 235});
+  // ferrule
+  DrawTaperedSection(At(0.96f), At(0.986f), perp, W(0.96f) + 0.8f * us,
+                     W(0.986f) + 0.2f * us, {232, 228, 218, 255});
+
+  // tip
+  DrawTaperedSection(At(0.986f), At(1.00f), perp, W(0.986f) * 0.92f,
+                     W(1.00f) * 0.72f, {64, 44, 26, 255});
+
+  // centerline gloss
+  DrawLineEx(At(0.025f), At(0.935f),
+             std::max(1.3f, tw * 0.24f), {250, 242, 215, 255});
+
+  // restore alpha blend for subsequent drawing
+  EndBlendMode();
 }
 
 void DrawUI(Game &game) {
