@@ -541,9 +541,10 @@ void PhysicsWorld::Integrate(double dt) {
 
 void PhysicsWorld::ApplyFriction(Ball &ball, double dt) {
   const double speed = Length(ball.vel);
-  if (speed < 0.003) {
+  if (speed < 0.001 && Length(ball.rollOmega) < 0.05 && std::abs(ball.sideOmega) < 0.05) {
     ball.vel = {};
-    ball.rollOmega *= std::max(0.0, 1.0 - dt * 5.0);
+    ball.rollOmega = {};
+    ball.sideOmega = 0.0;
   } else {
     Vec2 surface{kBallRadius * ball.rollOmega.y,
                  -kBallRadius * ball.rollOmega.x};
@@ -611,6 +612,10 @@ void PhysicsWorld::ResolveBallContacts(ShotEvents *events) {
       }
       double overlap = kBallDiameter - dist;
       if (overlap <= 0.0) {
+        const double relSpeed = Length(a.vel - b.vel);
+        if (relSpeed < 0.05) {
+          continue;
+        }
         const Vec2 bPrev = b.pos - b.vel * kFixedStep;
         Vec2 hitA, hitB;
         if (CcdSweptSpheres(aPrev, bPrev, a.vel, b.vel, kFixedStep, hitA, hitB)) {
@@ -642,8 +647,8 @@ void PhysicsWorld::ResolveBallContacts(ShotEvents *events) {
         const Vec2 t = Perp(n);
         const double tangentSpeed =
             Dot(rel, t) - (a.sideOmega + b.sideOmega) * kBallRadius;
-        double jt = -tangentSpeed / 18.0;
-        const double maxTangent = std::abs(jn) * 0.04;
+        double jt = -tangentSpeed / 28.0;
+        const double maxTangent = std::abs(jn) * 0.025;
         jt = Clamp(jt, -maxTangent, maxTangent);
         a.vel -= t * jt;
         b.vel += t * jt;

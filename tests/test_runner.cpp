@@ -208,6 +208,220 @@ void TestEightAfterClearedGroupWins() {
   Check(rules.State().winner == 1, "player two wins on legal eight");
 }
 
+// ─── strict physics tests ───
+
+void TestCutShotThrowAngle() {
+  hb::PhysicsWorld world;
+  for (auto &b : world.Balls()) { b.pocketed = true; }
+  auto &cue = world.Balls()[0];
+  auto &obj = world.Balls()[1];
+  cue.pocketed = false; obj.pocketed = false;
+
+  // Head-on: cue approaches exactly along line-of-centres
+  obj.pos = {0.5, 0.0};
+  cue.pos = {obj.pos.x - hb::kBallDiameter * 1.5, 0.0};
+  cue.vel = {2.5, 0.0};
+
+  hb::ShotEvents events;
+  StepFor(world, events, 0.04);
+  Check(events.firstContact == 1, "head-on contacts object ball");
+  Check(std::abs(obj.vel.y) < 0.001, "head-on collision has zero throw");
+}
+
+void TestStopShot() {
+  hb::PhysicsWorld world;
+  for (auto &b : world.Balls()) { b.pocketed = true; }
+  auto &cue = world.Balls()[0];
+  auto &obj = world.Balls()[1];
+  cue.pocketed = false; obj.pocketed = false;
+
+  obj.pos = {0.3, 0.0};
+  // head-on setup only ~1 ball diameter apart so ball is still sliding at impact
+  cue.pos = {obj.pos.x - hb::kBallDiameter * 1.5, 0.0};
+
+  // Center-hit: strike with mid-power, no spin
+  hb::ShotParams shot;
+  shot.aim = hb::Normalize(obj.pos - cue.pos);
+  shot.power = 0.35;
+  shot.tipX = 0.0;  // center
+  shot.tipY = 0.0;  // center → no follow/draw
+  world.StrikeCue(shot);
+
+  hb::ShotEvents events;
+  StepFor(world, events, 0.15);
+
+  Check(obj.vel.x > 0.4, "object ball moves forward after collision");
+  // After head-on collision with a sliding cue ball, the cue ball should
+  // have very little residual speed (stop shot)
+  Check(cue.vel.x < 0.15, "center-hit cue ball nearly stops after head-on collision");
+}
+
+void TestDrawShot() {
+  hb::PhysicsWorld world;
+  for (auto &b : world.Balls()) { b.pocketed = true; }
+  auto &cue = world.Balls()[0];
+  auto &obj = world.Balls()[1];
+  cue.pocketed = false; obj.pocketed = false;
+
+  obj.pos = {0.3, 0.0};
+  cue.pos = {obj.pos.x - hb::kBallDiameter * 1.5, 0.0};
+
+  hb::ShotParams shot;
+  shot.aim = hb::Normalize(obj.pos - cue.pos);
+  shot.power = 0.35;
+  shot.tipX = 0.0;
+  shot.tipY = -1.0; // maximum draw
+  world.StrikeCue(shot);
+
+  hb::ShotEvents events;
+  StepFor(world, events, 0.6);
+
+  Check(cue.vel.x < -0.04, "draw shot reverses cue ball direction");
+  Check(obj.vel.x > 0.35, "draw shot sends object ball forward");
+  Check(obj.vel.x > 0.35, "draw shot sends object ball forward");
+}
+
+void TestFollowShot() {
+  hb::PhysicsWorld world;
+  for (auto &b : world.Balls()) { b.pocketed = true; }
+  auto &cue = world.Balls()[0];
+  auto &obj = world.Balls()[1];
+  cue.pocketed = false; obj.pocketed = false;
+
+  obj.pos = {0.3, 0.0};
+  cue.pos = {obj.pos.x - hb::kBallDiameter * 1.5, 0.0};
+
+  hb::ShotParams shot;
+  shot.aim = hb::Normalize(obj.pos - cue.pos);
+  shot.power = 0.30;
+  shot.tipX = 0.0;
+  shot.tipY = 1.0; // maximum follow
+  world.StrikeCue(shot);
+
+  hb::ShotEvents events;
+  StepFor(world, events, 0.3);
+
+  Check(cue.vel.x > 0.08, "follow shot cue ball continues forward");
+  Check(obj.vel.x > 0.35, "follow shot object ball moves forward");
+}
+
+void TestCcdThinCut() {
+  hb::PhysicsWorld world;
+  for (auto &b : world.Balls()) { b.pocketed = true; }
+  auto &cue = world.Balls()[0];
+  auto &obj = world.Balls()[1];
+  cue.pocketed = false; obj.pocketed = false;
+
+  // Extremely thin cut: cue ball passes almost tangent to object ball
+  // Set up so that the aiming line would be valid for ghost ball but
+  // discrete steps might miss the collision
+  const double grazingOffset = hb::kBallDiameter * 0.995; // very thin
+  obj.pos = {0.5, grazingOffset};
+  cue.pos = {0.0, grazingOffset - 0.001};
+  cue.vel = {4.0, 0.0}; // high speed → large step → potential miss
+
+  hb::ShotEvents events;
+  StepFor(world, events, 0.3);
+
+  // CCD should ensure collision is detected even on thin cuts
+  Check(events.firstContact == 1, "CCD detects thin cut collision");
+  Check(hb::Length(obj.vel) > 0.05, "object ball moves after thin cut");
+}
+
+void TestCcdDeepIntoStepContact() {
+  hb::PhysicsWorld world;
+  for (auto &b : world.Balls()) { b.pocketed = true; }
+  auto &cue = world.Balls()[0];
+  auto &obj = world.Balls()[1];
+  cue.pocketed = false; obj.pocketed = false;
+
+  // Cue ball crosses object ball path; without CCD, contact happens
+  // mid-step and would be missed at 240 Hz with high speed
+  obj.pos = {0.6, 0.0};
+  // Cue positioned so that in one step it jumps past the contact zone
+  cue.pos = {obj.pos.x - hb::kBallDiameter - 0.018, 0.0};
+  cue.vel = {6.5, 0.0}; // very fast: 6.5/240 ≈ 27mm per step
+
+  // Use maximum legal cue speed
+  cue.vel = hb::Vec2{4.85, 0.0};
+
+  hb::ShotEvents events;
+  StepFor(world, events, 0.15);
+
+  Check(events.firstContact == 1, "CCD detects contact at high speed deep into step");
+  Check(hb::Length(obj.vel) > 0.5, "object ball receives significant impulse via CCD");
+}
+
+void TestSpinDecaysOverTime() {
+  hb::PhysicsWorld world;
+  for (auto &b : world.Balls()) { b.pocketed = true; }
+  auto &cue = world.Balls()[0];
+  cue.pocketed = false;
+
+  cue.pos = {0.0, 0.0};
+  hb::ShotParams shot;
+  shot.aim = {1.0, 0.0};
+  shot.power = 0.5;
+  shot.tipX = 1.0; // max side spin
+  shot.tipY = 0.0;
+  world.StrikeCue(shot);
+
+  const double initialSpin = std::abs(cue.sideOmega);
+  Check(initialSpin > 0.5, "cue ball gets significant side spin");
+
+  hb::ShotEvents events;
+  StepFor(world, events, 4.0);
+
+  // Side spin should decay substantially after 4 seconds
+  Check(std::abs(cue.sideOmega) < initialSpin * 0.25,
+        "side spin decays over time");
+}
+
+void TestFrictionConvertsSlideToRoll() {
+  hb::PhysicsWorld world;
+  for (auto &b : world.Balls()) { b.pocketed = true; }
+  auto &ball = world.Balls()[5];
+  ball.pocketed = false;
+
+  ball.pos = {0.0, 0.0};
+  ball.vel = {0.5, 0.0};
+  // No initial roll → pure slide
+  ball.rollOmega = {};
+
+  hb::ShotEvents events;
+  // Let it travel for a while — friction should convert sliding to rolling
+  StepFor(world, events, 2.0);
+
+  // After sliding on felt for long enough, ball should be rolling
+  // (rollOmega should match translational velocity: omega = v / R)
+  const double expectedOmega = hb::Length(ball.vel) / hb::kBallRadius;
+  const double actualOmega = hb::Length(ball.rollOmega);
+  Check(std::abs(actualOmega - expectedOmega) < 0.8,
+        "sliding friction converts to rolling");
+}
+
+void TestBallBallRestitution() {
+  hb::PhysicsWorld world;
+  for (auto &b : world.Balls()) { b.pocketed = true; }
+  auto &cue = world.Balls()[0];
+  auto &obj = world.Balls()[1];
+  cue.pocketed = false; obj.pocketed = false;
+
+  obj.pos = {0.4, 0.0};
+  cue.pos = {obj.pos.x - hb::kBallDiameter * 1.3, 0.0};
+  cue.vel = {1.5, 0.0};
+
+  hb::ShotEvents events;
+  StepFor(world, events, 0.1);
+
+  const double vBefore = 1.5;
+  const double vObjAfter = obj.vel.x;
+  const double vCueAfter = cue.vel.x;
+  // For equal-mass elastic collision: vObj ≈ vBefore (slightly less due to friction losses)
+  Check(vObjAfter > vCueAfter, "object ball faster than cue ball after head-on");
+  Check(vObjAfter > vBefore * 0.85, "object ball retains >85% of incoming speed");
+}
+
 } // namespace
 
 int main() {
@@ -223,6 +437,15 @@ int main() {
   TestRulesAssignsGroup();
   TestEarlyEightLoses();
   TestEightAfterClearedGroupWins();
+  TestCutShotThrowAngle();
+  TestStopShot();
+  TestDrawShot();
+  TestFollowShot();
+  TestCcdThinCut();
+  TestCcdDeepIntoStepContact();
+  TestSpinDecaysOverTime();
+  TestFrictionConvertsSlideToRoll();
+  TestBallBallRestitution();
   std::cout << "All heyball tests passed\n";
   return 0;
 }

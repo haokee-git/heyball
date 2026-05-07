@@ -777,89 +777,90 @@ void DrawDetailedCue(Vector2 cueBall, Vector2 aimDir, float ballR,
 
   const float s = static_cast<float>(view.scale);
   const float us = view.uiScale;
-  const float cueLen = std::min(s * 1.35f, 1800.0f);
+  const float cueLen = std::min(s * 1.38f, 1850.0f);
   const float gap = ballR + 4.0f * us + (10.0f + power * 118.0f) * us;
   const float tipX = cueBall.x - forward.x * gap;
   const float tipY = cueBall.y - forward.y * gap;
   const float buttX = tipX - forward.x * cueLen;
   const float buttY = tipY - forward.y * cueLen;
 
-  const float tw = std::max(11.0f * us, 0.030f * s);
-  const float bw = std::max(std::max(tw * 2.8f, 0.066f * s), 28.0f * us);
+  const float tw = std::max(14.0f * us, 0.038f * s);
+  const float bw = std::max(std::max(tw * 2.8f, 0.082f * s), 35.0f * us);
 
   const auto At = [&](float t) -> Vector2 {
     return {buttX + (tipX - buttX) * t, buttY + (tipY - buttY) * t};
   };
   const auto W = [&](float t) -> float { return bw + (tw - bw) * t; };
 
-  // force opaque blend: GL_ONE / GL_ZERO → no blending
   BeginBlendMode(BLEND_CUSTOM);
   rlSetBlendFactors(RL_ONE, RL_ZERO, RL_FUNC_ADD);
 
-  // --- shadow (pre-blended dark overlay, drawn as solid dark) ---
-  const float sx = 3.5f * us;
-  const float sy = 4.0f * us;
+  // shadow
+  const float sx = 4.0f * us;
+  const float sy = 4.5f * us;
   DrawTaperedSection({buttX + sx, buttY + sy}, {tipX + sx, tipY + sy},
-                     perp, bw * 1.14f, tw * 1.14f, {0, 0, 0, 96});
+                     perp, bw * 1.16f, tw * 1.16f, {0, 0, 0, 96});
 
-  // --- main body (one-piece tapered from butt to tip) ---
+  // full-length base
   DrawTaperedSection(At(0.00f), At(1.00f), perp, bw, tw,
-                     {168, 132, 78, 255});
+                     {162, 128, 76, 255});
 
-  // butt dark section (overlay on rear half)
-  DrawTaperedSection(At(0.00f), At(0.49f), perp, W(0.00f) + 1.4f * us,
-                     W(0.49f) + 1.0f * us, {72, 38, 18, 255});
+  // butt hardwood (rear ~47%)
+  DrawTaperedSection(At(0.00f), At(0.47f), perp, W(0.00f) + 1.8f * us,
+                     W(0.47f) + 1.4f * us, {76, 40, 19, 255});
 
   // butt cap
-  const float capRim = bw * 1.10f;
-  DrawTaperedSection(At(0.000f), At(0.018f), perp, capRim + 1.2f * us, capRim,
-                     {28, 12, 5, 255});
-  DrawTaperedSection(At(0.016f), At(0.030f), perp, capRim, W(0.030f),
-                     {188, 163, 105, 255});
+  const float capW = bw * 1.12f;
+  DrawTaperedSection(At(0.000f), At(0.016f), perp, capW + 1.5f * us, capW,
+                     {22, 10, 4, 255});
+  DrawTaperedSection(At(0.014f), At(0.028f), perp, capW, W(0.028f),
+                     {192, 165, 107, 255});
 
-  // decorative rings
-  DrawTaperedSection(At(0.090f), At(0.104f), perp, W(0.090f) + 2.4f * us,
-                     W(0.104f) + 2.4f * us, {205, 192, 148, 255});
-  DrawTaperedSection(At(0.148f), At(0.161f), perp, W(0.148f) + 2.4f * us,
-                     W(0.161f) + 2.4f * us, {205, 192, 148, 255});
-  DrawTaperedSection(At(0.202f), At(0.215f), perp, W(0.202f) + 2.4f * us,
-                     W(0.215f) + 2.4f * us, {205, 192, 148, 255});
+  // decorative ring A
+  DrawTaperedSection(At(0.088f), At(0.102f), perp, W(0.088f) + 2.8f * us,
+                     W(0.102f) + 2.8f * us, {210, 195, 150, 255});
+  // decorative ring B
+  DrawTaperedSection(At(0.146f), At(0.160f), perp, W(0.146f) + 2.8f * us,
+                     W(0.160f) + 2.8f * us, {210, 195, 150, 255});
+  // decorative ring C
+  DrawTaperedSection(At(0.204f), At(0.218f), perp, W(0.204f) + 2.8f * us,
+                     W(0.218f) + 2.8f * us, {210, 195, 150, 255});
 
-  // joint collar
-  DrawTaperedSection(At(0.34f), At(0.38f), perp, W(0.34f) + 3.2f * us,
-                     W(0.38f) + 3.2f * us, {175, 148, 99, 255});
-  DrawTaperedSection(At(0.33f), At(0.344f), perp, W(0.33f) + 2.6f * us,
-                     W(0.344f) + 2.6f * us, {48, 26, 12, 255});
-  DrawTaperedSection(At(0.376f), At(0.384f), perp, W(0.376f) + 2.6f * us,
-                     W(0.384f) + 2.6f * us, {48, 26, 12, 255});
+  // joint accent dark rings
+  DrawTaperedSection(At(0.34f), At(0.352f), perp, W(0.34f) + 3.0f * us,
+                     W(0.352f) + 3.0f * us, {42, 22, 10, 255});
+  DrawTaperedSection(At(0.396f), At(0.408f), perp, W(0.396f) + 3.0f * us,
+                     W(0.408f) + 3.0f * us, {42, 22, 10, 255});
+  // joint brass collar
+  DrawTaperedSection(At(0.35f), At(0.40f), perp, W(0.35f) + 3.5f * us,
+                     W(0.40f) + 3.5f * us, {178, 152, 102, 255});
 
-  // shaft highlight (lighter overlay on front half)
-  DrawTaperedSection(At(0.38f), At(0.96f), perp, W(0.38f), W(0.96f),
-                     {238, 214, 152, 255});
+  // shaft maple overlay (front ~58%)
+  DrawTaperedSection(At(0.42f), At(0.96f), perp, W(0.42f), W(0.96f),
+                     {242, 218, 156, 255});
 
   // shaft grain lines
   for (int g = -1; g <= 1; g += 2) {
-    const float gOff = g * W(0.50f) * 0.20f;
-    const Vector2 sa = {At(0.40f).x + perp.x * gOff,
-                        At(0.40f).y + perp.y * gOff};
-    const Vector2 sb = {At(0.93f).x + perp.x * gOff * 0.50f,
-                        At(0.93f).y + perp.y * gOff * 0.50f};
-    DrawLineEx(sa, sb, std::max(0.8f, us * 0.9f), {168, 122, 64, 255});
+    const float gOff = g * W(0.50f) * 0.18f;
+    const Vector2 sa = {At(0.43f).x + perp.x * gOff,
+                        At(0.43f).y + perp.y * gOff};
+    const Vector2 sb = {At(0.94f).x + perp.x * gOff * 0.48f,
+                        At(0.94f).y + perp.y * gOff * 0.48f};
+    DrawLineEx(sa, sb, std::max(0.8f, us * 0.95f), {172, 126, 68, 255});
   }
 
   // ferrule
-  DrawTaperedSection(At(0.96f), At(0.986f), perp, W(0.96f) + 0.8f * us,
-                     W(0.986f) + 0.2f * us, {232, 228, 218, 255});
+  DrawTaperedSection(At(0.96f), At(0.986f), perp, W(0.96f) + 1.0f * us,
+                     W(0.986f) + 0.3f * us, {236, 232, 220, 255});
 
   // tip
-  DrawTaperedSection(At(0.986f), At(1.00f), perp, W(0.986f) * 0.92f,
-                     W(1.00f) * 0.72f, {64, 44, 26, 255});
+  DrawTaperedSection(At(0.986f), At(1.00f), perp, W(0.986f) * 0.90f,
+                     W(1.00f) * 0.68f, {68, 46, 28, 255});
 
-  // centerline gloss
-  DrawLineEx(At(0.025f), At(0.935f),
-             std::max(1.3f, tw * 0.24f), {250, 242, 215, 255});
+  // centerline reflection
+  DrawLineEx(At(0.025f), At(0.94f),
+             std::max(1.4f, tw * 0.26f), {252, 243, 218, 255});
 
-  // restore alpha blend for subsequent drawing
   EndBlendMode();
 }
 
