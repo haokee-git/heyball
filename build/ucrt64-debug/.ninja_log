@@ -2,9 +2,11 @@
 5	53	7998266871843341	CMakeFiles/heyball.dir/generated/resources.rc.obj	9f909da6c8d0570d
 5	503	7998462096095884	CMakeFiles/heyball_tests.dir/tests/test_runner.cpp.obj	e378bb5ab54d3bb2
 3	573	7998461774480552	CMakeFiles/heyball_core.dir/src/core.cpp.obj	6cadc58d2ddf6cfc
-5	697	7998489039121623	CMakeFiles/heyball.dir/src/main.cpp.obj	a7a1cbc19ab34048
+4	604	7998491528715704	CMakeFiles/heyball.dir/src/main.cpp.obj	a7a1cbc19ab34048
 573	626	7998461780170576	libheyball_core.a	a03868fde6b8545
 504	672	7998462101095848	heyball_tests.exe	4433fe8cbc8fe3cc
-697	1053	7998489046041586	heyball.exe	41c1187a81d4c39d
-4	604	7998491528715704	CMakeFiles/heyball.dir/src/main.cpp.obj	a7a1cbc19ab34048
 605	962	7998491534725699	heyball.exe	41c1187a81d4c39d
+4	599	7998493752655712	CMakeFiles/heyball_core.dir/src/core.cpp.obj	6cadc58d2ddf6cfc
+601	660	7998493758625680	libheyball_core.a	a03868fde6b8545
+661	831	7998493759225677	heyball_tests.exe	4433fe8cbc8fe3cc
+660	1118	7998493759215679	heyball.exe	41c1187a81d4c39d

@@ -613,10 +613,14 @@ void PhysicsWorld::ResolveBallContacts(ShotEvents *events) {
       double overlap = kBallDiameter - dist;
       if (overlap <= 0.0) {
         const double relSpeed = Length(a.vel - b.vel);
-        if (relSpeed < 0.05) {
+        if (relSpeed < 0.18) {
           continue;
         }
         const Vec2 bPrev = b.pos - b.vel * kFixedStep;
+        // Only CCD for fresh collisions: balls well-separated at start of step
+        if (Length(aPrev - bPrev) < kBallDiameter * 1.02) {
+          continue;
+        }
         Vec2 hitA, hitB;
         if (CcdSweptSpheres(aPrev, bPrev, a.vel, b.vel, kFixedStep, hitA, hitB)) {
           a.pos = hitA;
