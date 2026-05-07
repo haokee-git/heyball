@@ -11,8 +11,10 @@ constexpr double kRestitutionRail = 0.780;
 constexpr double kGravity = 9.80665;
 constexpr double kSlideMu = 0.145;
 constexpr double kRollDrag = 0.055;
-constexpr double kSideDecay = 0.78;
+constexpr double kSideDecay = 0.42;
 constexpr double kCueMaxSpeed = 4.85;
+constexpr double kRailGrip = 0.34;
+constexpr double kRailSpinLoss = 0.94;
 std::array<Vec2, 6> PocketCenters() {
   return {{{-kTableWidth * 0.5, -kTableHeight * 0.5},
            {0.0, -kTableHeight * 0.5},
@@ -386,12 +388,12 @@ void PhysicsWorld::ResetRack() {
     SetInitialOrientation(balls_[i], i);
   }
 
-  balls_[0].pos = {-kTableWidth * 0.30, 0.0};
+  balls_[0].pos = {kHeadSpotX, 0.0};
 
   const double gap = 0.0015;
   const double spacing = kBallDiameter + gap;
   const double rowDx = std::sqrt(3.0) * spacing * 0.5;
-  const Vec2 apex{kTableWidth * 0.235, 0.0};
+  const Vec2 apex{kFootSpotX, 0.0};
   const std::array<std::array<int, 5>, 5> rack = {{
       {{1, 0, 0, 0, 0}},
       {{9, 2, 0, 0, 0}},
@@ -477,7 +479,7 @@ void PhysicsWorld::SpotBall(int number) {
   if (number < 1 || number > 15) {
     return;
   }
-  const Vec2 spot{kTableWidth * 0.25, 0.0};
+  const Vec2 spot{kFootSpotX, 0.0};
   Vec2 pos = spot;
   for (int attempt = 0; attempt < 80 && !CanPlaceCue(pos); ++attempt) {
     pos.x += kBallDiameter * 0.55;
@@ -645,14 +647,22 @@ void PhysicsWorld::ResolveRailContacts(ShotEvents *events) {
       }
       ball.pos += normal * (kBallRadius - dist + 0.0002);
       const double vN = Dot(ball.vel, normal);
+      double normalImpulse = 0.0;
       if (vN < 0.0) {
-        ball.vel -= normal * ((1.0 + kRestitutionRail) * vN);
+        normalImpulse = -(1.0 + kRestitutionRail) * vN;
+        ball.vel += normal * normalImpulse;
       }
-      const Vec2 t = Perp(normal);
-      const double spinKick = ball.sideOmega * kBallRadius * 0.095;
-      ball.vel += t * spinKick;
-      ball.vel -= t * (Dot(ball.vel, t) * 0.035);
-      ball.sideOmega *= 0.72;
+
+      if (normalImpulse > 0.0) {
+        const Vec2 t = Perp(normal);
+        const double slipT = Dot(ball.vel, t) - ball.sideOmega * kBallRadius;
+        double tangentImpulse = -slipT / 3.5;
+        const double maxGrip = normalImpulse * kRailGrip;
+        tangentImpulse = Clamp(tangentImpulse, -maxGrip, maxGrip);
+        ball.vel += t * tangentImpulse;
+        ball.sideOmega -= tangentImpulse * 2.5 / kBallRadius;
+        ball.sideOmega *= kRailSpinLoss;
+      }
       hitAny = true;
     }
     if (hitAny && events) {

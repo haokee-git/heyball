@@ -1,0 +1,3 @@
+#include "D:/heyball/src/resource.h"
+
+IDR_PINGFANG_SC RCDATA "C:/Windows/Fonts/PingFangSC.otf"

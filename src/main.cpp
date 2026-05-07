@@ -53,6 +53,7 @@ struct Game {
   bool draggingTitle = false;
   int resizeMode = 0;
   bool requestClose = false;
+  bool helpOpen = false;
 };
 
 enum ResizeEdge {
@@ -89,6 +90,14 @@ Vector2 WorldToScreen(const View &view, Vec2 p) {
 Vec2 ScreenToWorld(const View &view, Vector2 p) {
   return {(p.x - (view.play.x + view.play.width * 0.5f)) / view.scale,
           (p.y - (view.play.y + view.play.height * 0.5f)) / view.scale};
+}
+
+Vec2 ClampCuePlacement(Vec2 pos) {
+  const double left = -hb::kTableWidth * 0.5 + hb::kCushionNoseInset + hb::kBallRadius;
+  const double right = hb::kTableWidth * 0.5 - hb::kCushionNoseInset - hb::kBallRadius;
+  const double top = -hb::kTableHeight * 0.5 + hb::kCushionNoseInset + hb::kBallRadius;
+  const double bottom = hb::kTableHeight * 0.5 - hb::kCushionNoseInset - hb::kBallRadius;
+  return {hb::Clamp(pos.x, left, right), hb::Clamp(pos.y, top, bottom)};
 }
 
 Vec2 RayToTableEdge(Vec2 origin, Vec2 dir) {
@@ -209,6 +218,10 @@ std::vector<int> BuildFontCodepoints() {
       "重新摆选择或按空格键开始下一局白落袋获得自由首次触错误碰后无且库"
       "开不合法打进复位方继续赢得本局轮到目标请选择");
   AddUtf8Codepoints(codepoints, "：，×");
+  AddUtf8Codepoints(
+      codepoints,
+      "帮助规则两名轮流先合法打完自己的再打进获胜犯规对手自动判定操作移动鼠标瞄准滚轮"
+      "下滑蓄力上滑出杆右侧击点盘调整高低杆和左右塞按钮回到中杆确认放置清空关闭：，。；、×");
   return codepoints;
 }
 
@@ -239,7 +252,7 @@ Font LoadPingFangFont(std::vector<int> &codepoints) {
     }
   }
 #endif
-  return LoadFontEx("assets/PingFangSC.otf", kUiFontSize, codepoints.data(),
+  return LoadFontEx("C:/Windows/Fonts/PingFangSC.otf", kUiFontSize, codepoints.data(),
                     static_cast<int>(codepoints.size()));
 }
 
@@ -322,13 +335,9 @@ Vector3 BallWorldFromLocal(const Ball &ball, Vector3 local) {
           static_cast<float>(local.x * m[6] + local.y * m[7] + local.z * m[8])};
 }
 
-std::array<Vector3, 6> NumberSpotLocals() {
+std::array<Vector3, 2> NumberSpotLocals() {
   return {{{0.0f, 0.0f, 1.0f},
-           {0.0f, 0.0f, -1.0f},
-           {1.0f, 0.0f, 0.0f},
-           {-1.0f, 0.0f, 0.0f},
-           {0.0f, 1.0f, 0.0f},
-           {0.0f, -1.0f, 0.0f}}};
+           {0.0f, 0.0f, -1.0f}}};
 }
 
 struct NumberSpot {
@@ -337,19 +346,25 @@ struct NumberSpot {
   float visibility = 0.0f;
 };
 
-NumberSpot BestNumberSpot(const Ball &ball, bool stripe) {
+float NumberSpotVisibility(float facing) {
+  const float t = static_cast<float>(hb::Clamp((facing - 0.01f) / 0.58f, 0.0, 1.0));
+  return t * t * (3.0f - 2.0f * t);
+}
+
+std::array<NumberSpot, 2> NumberSpotsForBall(const Ball &ball) {
   const auto spots = NumberSpotLocals();
-  const int count = stripe ? 4 : 6;
-  NumberSpot best{};
-  best.world.z = -1.0f;
-  for (int i = 0; i < count; ++i) {
+  std::array<NumberSpot, 2> out{};
+  for (int i = 0; i < 2; ++i) {
     const Vector3 world = BallWorldFromLocal(ball, spots[i]);
-    if (world.z > best.world.z) {
-      best = {spots[i], world,
-              static_cast<float>(hb::Clamp((world.z - 0.08f) / 0.82f, 0.0, 1.0))};
+    const NumberSpot candidate{spots[i], world, NumberSpotVisibility(world.z)};
+    if (candidate.visibility > out[0].visibility) {
+      out[1] = out[0];
+      out[0] = candidate;
+    } else if (candidate.visibility > out[1].visibility) {
+      out[1] = candidate;
     }
   }
-  return best;
+  return out;
 }
 
 Color ShadeBallPixel(Color base, Vector3 n, float edgeAlpha) {
@@ -384,15 +399,11 @@ void DrawBall(Font font, const View &view, const Ball &ball) {
   const bool stripe = hb::IsStripe(ball.number);
   const Color base = BallColor(ball.number);
   const Color ivory{246, 243, 226, 255};
-  const auto numberSpots = NumberSpotLocals();
-  const int numberSpotCount = stripe ? 4 : 6;
-  const float plaqueAngle = stripe ? 0.305f : 0.345f;
+  const auto numberSpots = NumberSpotsForBall(ball);
+  const int numberSpotCount = ball.number > 0 ? 2 : 0;
+  const float plaqueAngle = stripe ? 0.395f : 0.430f;
   const float plaqueCos = std::cos(plaqueAngle);
-  const float plaqueFeather = 0.030f;
-  std::array<bool, 6> numberSpotVisible{};
-  for (int i = 0; i < numberSpotCount; ++i) {
-    numberSpotVisible[i] = BallWorldFromLocal(ball, numberSpots[i]).z > 0.02f;
-  }
+  const float plaqueFeather = 0.040f;
   const int minX = static_cast<int>(std::floor(c.x - r - 1.0f));
   const int maxX = static_cast<int>(std::ceil(c.x + r + 1.0f));
   const int minY = static_cast<int>(std::floor(c.y - r - 1.0f));
@@ -420,17 +431,16 @@ void DrawBall(Font font, const View &view, const Ball &ball) {
           material = MixColor(base, ivory, t);
         }
       }
-      if (ball.number > 0) {
-        for (int i = 0; i < numberSpotCount; ++i) {
-          if (!numberSpotVisible[i]) {
-            continue;
-          }
-          const float d = Vector3DotProduct(local, numberSpots[i]);
-          if (d < plaqueCos - plaqueFeather) {
-            continue;
-          }
+      for (int i = 0; i < numberSpotCount; ++i) {
+        const NumberSpot &spot = numberSpots[i];
+        const float spotWeight = i == 0 ? 1.0f : 0.45f;
+        if (spot.visibility <= (i == 0 ? 0.01f : 0.22f)) {
+          continue;
+        }
+        const float d = Vector3DotProduct(local, spot.local);
+        if (d >= plaqueCos - plaqueFeather) {
           const float t = (d - (plaqueCos - plaqueFeather)) / plaqueFeather;
-          material = MixColor(material, ivory, t);
+          material = MixColor(material, ivory, t * spot.visibility * spotWeight);
         }
       }
       const float edgeAlpha = d2 > 0.90f ? (1.0f - d2) / 0.10f : 1.0f;
@@ -445,29 +455,41 @@ void DrawBall(Font font, const View &view, const Ball &ball) {
                   {25, 25, 25, static_cast<unsigned char>(150 * visualAlpha)});
 
   if (ball.number > 0) {
-    const NumberSpot spot = BestNumberSpot(ball, stripe);
-    if (spot.visibility <= 0.08f) {
-      return;
-    }
-    const Vector2 d{c.x + spot.world.x * r, c.y + spot.world.y * r};
-    Vector3 tangentLocal =
-        Vector3CrossProduct({0.0f, 1.0f, 0.0f}, spot.local);
-    if (Vector3Length(tangentLocal) < 0.01f) {
-      tangentLocal = Vector3CrossProduct({1.0f, 0.0f, 0.0f}, spot.local);
-    }
-    tangentLocal = Vector3Normalize(tangentLocal);
-    const Vector3 tangentWorld = BallWorldFromLocal(ball, tangentLocal);
-    const float rotation =
-        std::atan2(tangentWorld.y, tangentWorld.x) * 57.2957795f;
     char label[4]{};
     std::snprintf(label, sizeof(label), "%d", ball.number);
-    const float fs = (ball.number >= 10 ? r * 0.39f : r * 0.48f) *
-                     (0.70f + 0.30f * spot.visibility);
-    const Vector2 sz = MeasureTextEx(font, label, fs, 0.0f);
-    DrawTextPro(font, label, {d.x, d.y}, {sz.x * 0.5f, sz.y * 0.5f}, rotation, fs,
-                0.0f,
-                {15, 15, 15,
-                 static_cast<unsigned char>(255 * spot.visibility * visualAlpha)});
+    for (int i = 0; i < numberSpotCount; ++i) {
+      const NumberSpot &spot = numberSpots[i];
+      const float spotWeight = i == 0 ? 1.0f : 0.45f;
+      if (spot.visibility <= (i == 0 ? 0.06f : 0.26f)) {
+        continue;
+      }
+      const Vector2 d{c.x + spot.world.x * r, c.y + spot.world.y * r};
+      Vector3 tangentLocal =
+          Vector3CrossProduct({0.0f, 1.0f, 0.0f}, spot.local);
+      if (Vector3Length(tangentLocal) < 0.01f) {
+        tangentLocal = Vector3CrossProduct({1.0f, 0.0f, 0.0f}, spot.local);
+      }
+      tangentLocal = Vector3Normalize(tangentLocal);
+      const Vector3 tangentWorld = BallWorldFromLocal(ball, tangentLocal);
+      const float rotation =
+          std::atan2(tangentWorld.y, tangentWorld.x) * 57.2957795f;
+      const float faceScale = 0.76f + 0.24f * spot.visibility;
+      const float fs = std::max((ball.number >= 10 ? 7.0f : 8.0f) * view.uiScale,
+                                (ball.number >= 10 ? r * 0.58f : r * 0.74f)) *
+                       faceScale;
+      const Vector2 sz = MeasureTextEx(font, label, fs, 0.0f);
+      const Vector2 origin{sz.x * 0.5f, sz.y * 0.5f};
+      const Color textColor{
+          10, 10, 10,
+          static_cast<unsigned char>(255 * spot.visibility * spotWeight * visualAlpha)};
+      const float bold = std::max(0.35f, 0.55f * view.uiScale);
+      DrawTextPro(font, label, {d.x + bold, d.y}, origin, rotation, fs, 0.0f,
+                  textColor);
+      DrawTextPro(font, label, {d.x, d.y + bold}, origin, rotation, fs, 0.0f,
+                  textColor);
+      DrawTextPro(font, label, {d.x, d.y}, origin, rotation, fs, 0.0f,
+                  textColor);
+    }
   }
 }
 
@@ -644,9 +666,9 @@ void DrawTable(const View &view) {
   DrawRectangleLinesEx(view.play, 1.0f, {9, 32, 26, 130});
 
   const float spotR = 3.0f;
-  DrawCircleV(WorldToScreen(view, {-hb::kTableWidth * 0.25, 0.0}), spotR,
+  DrawCircleV(WorldToScreen(view, {hb::kHeadSpotX, 0.0}), spotR,
               {210, 220, 205, 85});
-  DrawCircleV(WorldToScreen(view, {hb::kTableWidth * 0.25, 0.0}), spotR,
+  DrawCircleV(WorldToScreen(view, {hb::kFootSpotX, 0.0}), spotR,
               {210, 220, 205, 85});
 }
 
@@ -707,6 +729,29 @@ void DrawTopStatus(Game &game) {
              1.0f, {93, 112, 101, 130});
 }
 
+float UiScale() {
+  return static_cast<float>(
+      hb::Clamp(std::min(GetScreenWidth() / 1360.0, GetScreenHeight() / 820.0),
+                0.72, 1.55));
+}
+
+Rectangle ControlPanelRect(float s) {
+  return {static_cast<float>(GetScreenWidth()) - 258.0f * s, 46.0f * s,
+          224.0f * s, 390.0f * s};
+}
+
+Vector2 TipControlCenter(Rectangle panel, float s) {
+  return {panel.x + 112.0f * s, panel.y + 146.0f * s};
+}
+
+Rectangle HelpButtonRect() {
+  return {188.0f, 0.0f, 72.0f, 34.0f};
+}
+
+Rectangle HelpWindowRect(float s) {
+  return {108.0f * s, 54.0f * s, 520.0f * s, 314.0f * s};
+}
+
 Vector2 PointAlong(Vector2 a, Vector2 b, float t) {
   return {a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t};
 }
@@ -753,7 +798,7 @@ void DrawDetailedCue(Vector2 cueBall, Vector2 aimDir, float ballR,
                      float power, const View &view) {
   const Vector2 forward = Vector2Normalize(aimDir);
   const Vector2 normal{-forward.y, forward.x};
-  const float cueLength = static_cast<float>(1.47 * view.scale);
+  const float cueLength = static_cast<float>(1.18 * view.scale);
   const float pullback = static_cast<float>((10.0 + power * 118.0) * view.uiScale);
   const float tipGap = (4.0f + pullback);
   const Vector2 tip{cueBall.x - forward.x * (ballR + tipGap),
@@ -762,19 +807,22 @@ void DrawDetailedCue(Vector2 cueBall, Vector2 aimDir, float ballR,
                      tip.y - forward.y * cueLength};
 
   const float tipW =
-      std::max(7.0f * view.uiScale, static_cast<float>(0.019 * view.scale));
+      std::max(8.2f * view.uiScale, static_cast<float>(0.020 * view.scale));
   const float buttW = std::max(
-      std::max(tipW * 2.75f, static_cast<float>(0.056 * view.scale)),
+      std::max(tipW * 2.45f, static_cast<float>(0.056 * view.scale)),
       20.0f * view.uiScale);
   const float collarW = LerpF(buttW, tipW, 0.40f);
   const float shaftTipW = tipW * 1.02f;
 
-  const Vector2 castShadow{2.6f * view.uiScale, 3.2f * view.uiScale};
+  const Vector2 castShadow{2.6f * view.uiScale, 3.1f * view.uiScale};
   DrawTaperedSection({butt.x + castShadow.x, butt.y + castShadow.y},
                      {tip.x + castShadow.x, tip.y + castShadow.y},
-                     normal, buttW * 1.22f, tipW * 1.22f, {0, 0, 0, 58});
-  DrawTaperedSection(butt, tip, normal, buttW * 1.10f, tipW * 1.10f,
-                     {5, 6, 5, 120});
+                     normal, buttW * 1.16f, tipW * 1.16f, {0, 0, 0, 86});
+  DrawTaperedSection({butt.x + castShadow.x * 0.45f, butt.y + castShadow.y * 0.45f},
+                     {tip.x + castShadow.x * 0.45f, tip.y + castShadow.y * 0.45f},
+                     normal, buttW * 1.06f, tipW * 1.06f, {0, 0, 0, 112});
+  DrawTaperedSection(butt, tip, normal, buttW * 1.04f, tipW * 1.04f,
+                     {7, 8, 7, 255});
 
   DrawTaperedSection(PointAlong(butt, tip, 0.00f), PointAlong(butt, tip, 0.035f),
                      normal, buttW * 0.96f, buttW * 0.92f, {12, 12, 11, 255});
@@ -793,23 +841,39 @@ void DrawDetailedCue(Vector2 cueBall, Vector2 aimDir, float ballR,
   DrawTaperedSection(PointAlong(butt, tip, 0.371f), PointAlong(butt, tip, 0.955f),
                      normal, collarW, shaftTipW, {214, 171, 104, 255});
 
+  DrawLineEx({PointAlong(butt, tip, 0.060f).x - normal.x * buttW * 0.22f,
+              PointAlong(butt, tip, 0.060f).y - normal.y * buttW * 0.22f},
+             {PointAlong(butt, tip, 0.305f).x - normal.x * buttW * 0.16f,
+              PointAlong(butt, tip, 0.305f).y - normal.y * buttW * 0.16f},
+             std::max(1.0f, buttW * 0.13f), {10, 7, 5, 255});
+  DrawLineEx({PointAlong(butt, tip, 0.385f).x - normal.x * collarW * 0.20f,
+              PointAlong(butt, tip, 0.385f).y - normal.y * collarW * 0.20f},
+             {PointAlong(butt, tip, 0.940f).x - normal.x * shaftTipW * 0.24f,
+              PointAlong(butt, tip, 0.940f).y - normal.y * shaftTipW * 0.24f},
+             std::max(1.0f, shaftTipW * 0.20f), {138, 91, 44, 255});
+  DrawLineEx({PointAlong(butt, tip, 0.390f).x + normal.x * collarW * 0.18f,
+              PointAlong(butt, tip, 0.390f).y + normal.y * collarW * 0.18f},
+             {PointAlong(butt, tip, 0.935f).x + normal.x * shaftTipW * 0.22f,
+              PointAlong(butt, tip, 0.935f).y + normal.y * shaftTipW * 0.22f},
+             std::max(1.0f, shaftTipW * 0.14f), {246, 219, 162, 255});
+
   const float inlayW = buttW * 0.28f;
   DrawCueInlay(butt, tip, normal, 0.105f, 0.365f, inlayW, -buttW * 0.28f,
-               {190, 133, 63, 230});
+               {190, 133, 63, 255});
   DrawCueInlay(butt, tip, normal, 0.145f, 0.390f, inlayW * 0.9f, 0.0f,
-               {226, 176, 92, 235});
+               {226, 176, 92, 255});
   DrawCueInlay(butt, tip, normal, 0.185f, 0.382f, inlayW, buttW * 0.28f,
-               {190, 133, 63, 230});
+               {190, 133, 63, 255});
   DrawCueInlay(butt, tip, normal, 0.225f, 0.405f, inlayW * 0.72f, 0.0f,
-               {62, 38, 23, 240});
+               {62, 38, 23, 255});
 
-  for (int i = 0; i < 5; ++i) {
-    const float offset = (-0.30f + i * 0.15f) * collarW;
+  for (int i = 0; i < 3; ++i) {
+    const float offset = (-0.18f + i * 0.18f) * collarW;
     const Vector2 a = PointAlong(butt, tip, 0.40f);
     const Vector2 b = PointAlong(butt, tip, 0.93f);
     DrawLineEx({a.x + normal.x * offset, a.y + normal.y * offset},
                {b.x + normal.x * offset * 0.48f, b.y + normal.y * offset * 0.48f},
-               0.8f * view.uiScale, {111, 71, 31, 70});
+               0.85f * view.uiScale, {111, 71, 31, 115});
   }
 
   DrawCueRing(butt, tip, normal, 0.955f, 0.979f, buttW, tipW,
@@ -817,18 +881,14 @@ void DrawDetailedCue(Vector2 cueBall, Vector2 aimDir, float ballR,
   DrawCueRing(butt, tip, normal, 0.979f, 1.0f, buttW, tipW,
               {80, 50, 32, 255});
   DrawLineEx(PointAlong(butt, tip, 0.41f), PointAlong(butt, tip, 0.945f),
-             std::max(1.0f, shaftTipW * 0.22f), {246, 220, 164, 120});
+             std::max(1.0f, shaftTipW * 0.18f), {246, 220, 164, 230});
   DrawLineEx(PointAlong(butt, tip, 0.065f), PointAlong(butt, tip, 0.30f),
-             std::max(1.0f, buttW * 0.16f), {91, 57, 30, 150});
+             std::max(1.0f, buttW * 0.14f), {91, 57, 30, 235});
 }
 
 void DrawUI(Game &game) {
-  const float s = static_cast<float>(
-      hb::Clamp(std::min(GetScreenWidth() / 1360.0, GetScreenHeight() / 820.0),
-                0.72, 1.55));
-  const int sw = GetScreenWidth();
-  Rectangle panel{static_cast<float>(sw) - 258.0f * s, 46.0f * s,
-                  224.0f * s, 390.0f * s};
+  const float s = UiScale();
+  Rectangle panel = ControlPanelRect(s);
   DrawRoundedFillWithBorder(panel, 0.045f, 12, {12, 13, 14, 232},
                             {50, 58, 55, 190});
 
@@ -838,12 +898,18 @@ void DrawUI(Game &game) {
 
   DrawTextF(game.font, "击点", {panel.x + 18 * s, panel.y + 61 * s}, 22 * s,
             {205, 212, 204, 255});
-  const Vector2 center{panel.x + 112 * s, panel.y + 146 * s};
+  const Vector2 center = TipControlCenter(panel, s);
   const float padR = 50.0f * s;
   DrawCircleV(center, padR, {25, 29, 29, 255});
   DrawCircleLines(static_cast<int>(center.x), static_cast<int>(center.y), padR, {113, 128, 121, 180});
   DrawLineEx({center.x - padR, center.y}, {center.x + padR, center.y}, 1.0f, {110, 119, 115, 125});
   DrawLineEx({center.x, center.y - padR}, {center.x, center.y + padR}, 1.0f, {110, 119, 115, 125});
+  const Vector2 mouse = GetMousePosition();
+  if (Vector2Distance(mouse, center) <= padR) {
+    DrawCircleV(mouse, 8.0f * s, {228, 232, 218, 62});
+    DrawCircleLines(static_cast<int>(mouse.x), static_cast<int>(mouse.y),
+                    8.0f * s, {228, 232, 218, 145});
+  }
   DrawCircleV({center.x + static_cast<float>(game.tipX * padR),
                center.y - static_cast<float>(game.tipY * padR)},
               7.0f, {228, 232, 218, 255});
@@ -886,31 +952,124 @@ void DrawUI(Game &game) {
   }
 }
 
-Rectangle TitleButton(float x, const char *label, Font font, bool hot) {
-  Rectangle r{x, 0.0f, 42.0f, 34.0f};
+Rectangle TitleButton(Rectangle r, const char *label, Font font, bool hot) {
   DrawRectangleRec(r, hot ? Color{30, 33, 33, 255} : Color{0, 0, 0, 0});
   const float fs = 22.0f;
   const Vector2 sz = MeasureTextEx(font, label, fs, 0.0f);
-  DrawTextF(font, label, {r.x + (r.width - sz.x) * 0.5f, r.y + 6.0f}, fs,
+  DrawTextF(font, label, {r.x + (r.width - sz.x) * 0.5f,
+                          r.y + (r.height - sz.y) * 0.5f - 1.0f},
+            fs,
             {198, 204, 197, 235});
   return r;
+}
+
+void DrawTitleTextItem(Font font, Rectangle r, const char *label, float fs,
+                       Color color, bool hot) {
+  DrawRectangleRec(r, hot ? Color{20, 22, 22, 255} : Color{0, 0, 0, 0});
+  const Vector2 sz = MeasureTextEx(font, label, fs, 0.0f);
+  DrawTextF(font, label, {r.x + (r.width - sz.x) * 0.5f,
+                          r.y + (r.height - sz.y) * 0.5f - 1.0f},
+            fs, color);
+}
+
+enum class WindowButtonKind {
+  Minimize,
+  Maximize,
+  Restore,
+  Close
+};
+
+void DrawWindowButton(Rectangle r, WindowButtonKind kind, bool hot) {
+  DrawRectangleRec(r, hot ? Color{30, 33, 33, 255} : Color{0, 0, 0, 0});
+  const Color c = kind == WindowButtonKind::Close && hot
+                      ? Color{236, 210, 205, 255}
+                      : Color{198, 204, 197, 235};
+  const Vector2 center{r.x + r.width * 0.5f, r.y + r.height * 0.5f};
+  const float s = 8.0f;
+  if (kind == WindowButtonKind::Minimize) {
+    DrawLineEx({center.x - s * 0.75f, center.y + 4.0f},
+               {center.x + s * 0.75f, center.y + 4.0f}, 1.5f, c);
+  } else if (kind == WindowButtonKind::Maximize) {
+    DrawRectangleLinesEx({center.x - s * 0.65f, center.y - s * 0.65f,
+                          s * 1.3f, s * 1.3f},
+                         1.5f, c);
+  } else if (kind == WindowButtonKind::Restore) {
+    DrawRectangleLinesEx({center.x - s * 0.35f, center.y - s * 0.75f,
+                          s * 1.05f, s * 1.05f},
+                         1.3f, c);
+    DrawRectangleLinesEx({center.x - s * 0.70f, center.y - s * 0.35f,
+                          s * 1.05f, s * 1.05f},
+                         1.3f, c);
+  } else {
+    DrawLineEx({center.x - s * 0.65f, center.y - s * 0.65f},
+               {center.x + s * 0.65f, center.y + s * 0.65f}, 1.5f, c);
+    DrawLineEx({center.x + s * 0.65f, center.y - s * 0.65f},
+               {center.x - s * 0.65f, center.y + s * 0.65f}, 1.5f, c);
+  }
 }
 
 void DrawTitleBar(Game &game) {
   const float w = static_cast<float>(GetScreenWidth());
   const Vector2 mouse = GetMousePosition();
+  const Rectangle helpR = HelpButtonRect();
+  const Rectangle titleR{12.0f, 0.0f, 84.0f, 34.0f};
+  const Rectangle modeR{98.0f, 0.0f, 86.0f, 34.0f};
+  const Rectangle minR{w - 129.0f, 0.0f, 42.0f, 34.0f};
+  const Rectangle maxR{w - 86.0f, 0.0f, 42.0f, 34.0f};
+  const Rectangle closeR{w - 43.0f, 0.0f, 42.0f, 34.0f};
   Rectangle bar{0.0f, 0.0f, w, 34.0f};
   DrawRectangleRec(bar, BLACK);
   DrawRectangle(0, 33, GetScreenWidth(), 1, {50, 57, 55, 120});
-  DrawTextF(game.font, "中式八球", {18.0f, 5.0f}, 20.0f, {218, 224, 216, 255});
-  DrawTextF(game.font, "双人对战", {108.0f, 6.0f}, 18.0f,
-            {142, 154, 147, 230});
-  const Rectangle minR = TitleButton(w - 86.0f, "-", game.font,
-                                     PointInRect(mouse, {w - 86.0f, 0.0f, 42.0f, 34.0f}));
-  const Rectangle closeR = TitleButton(w - 43.0f, "×", game.font,
-                                       PointInRect(mouse, {w - 43.0f, 0.0f, 42.0f, 34.0f}));
-  (void)minR;
-  (void)closeR;
+  DrawTitleTextItem(game.font, titleR, "中式八球", 19.0f,
+                    {218, 224, 216, 255}, false);
+  DrawTitleTextItem(game.font, modeR, "双人对战", 17.0f,
+                    {142, 154, 147, 230}, false);
+  DrawTitleTextItem(game.font, helpR, "帮助", 18.0f,
+                    {198, 204, 197, 235},
+                    game.helpOpen || PointInRect(mouse, helpR));
+  DrawWindowButton(minR, WindowButtonKind::Minimize, PointInRect(mouse, minR));
+  DrawWindowButton(maxR,
+                   IsWindowMaximized() ? WindowButtonKind::Restore
+                                       : WindowButtonKind::Maximize,
+                   PointInRect(mouse, maxR));
+  DrawWindowButton(closeR, WindowButtonKind::Close, PointInRect(mouse, closeR));
+}
+
+void DrawFpsCounter(Font font) {
+  char text[32]{};
+  std::snprintf(text, sizeof(text), "FPS %d", GetFPS());
+  DrawTextF(font, text, {18.0f, 38.0f}, 18.0f, {180, 192, 184, 235});
+}
+
+void DrawHelpWindow(Game &game) {
+  if (!game.helpOpen) {
+    return;
+  }
+  const float s = UiScale();
+  const Rectangle panel = HelpWindowRect(s);
+  DrawRoundedFillWithBorder(panel, 0.035f, 12, {11, 13, 13, 246},
+                            {72, 84, 78, 230});
+
+  DrawTextF(game.font, "帮助", {panel.x + 18.0f * s, panel.y + 14.0f * s},
+            26.0f * s, {238, 241, 231, 255});
+  const Rectangle closeR{panel.x + panel.width - 42.0f * s,
+                         panel.y + 10.0f * s, 26.0f * s, 26.0f * s};
+  TitleButton(closeR, "×", game.font, PointInRect(GetMousePosition(), closeR));
+
+  const char *lines[] = {
+      "规则：中式八球，两名玩家轮流击球。",
+      "先合法打完自己的全色球或半色球，再打进8号球获胜。",
+      "犯规后对手获得自由球；开局或未定组时按规则自动判定。",
+      "操作：移动鼠标瞄准，滚轮下滑蓄力，滚轮上滑出杆。",
+      "右侧击点盘调整高低杆和左右塞；还原按钮回到中杆。",
+      "自由球时移动鼠标选择白球位置，左键确认放置。",
+      "Esc 清空力度，C 还原击点，空格开始下一局。"};
+  float y = panel.y + 56.0f * s;
+  for (const char *line : lines) {
+    DrawTextF(game.font, line, {panel.x + 20.0f * s, y}, 18.0f * s,
+              {207, 216, 207, 245});
+    y += 32.0f * s;
+  }
 }
 
 bool HandleTitleBarInput(Game &game) {
@@ -940,12 +1099,16 @@ bool HandleTitleBarInput(Game &game) {
     }
   }
 
-  const Rectangle minR{w - 86.0f, 0.0f, 42.0f, 34.0f};
+  const Rectangle helpR = HelpButtonRect();
+  const Rectangle minR{w - 129.0f, 0.0f, 42.0f, 34.0f};
+  const Rectangle maxR{w - 86.0f, 0.0f, 42.0f, 34.0f};
   const Rectangle closeR{w - 43.0f, 0.0f, 42.0f, 34.0f};
-  const Rectangle dragR{0.0f, 0.0f, w - 88.0f, 34.0f};
+  const Rectangle dragR{0.0f, 0.0f, w - 131.0f, 34.0f};
 
   if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
-    if (hit != ResizeNone && !PointInRect(mouse, minR) && !PointInRect(mouse, closeR)) {
+    if (hit != ResizeNone && !PointInRect(mouse, minR) &&
+        !PointInRect(mouse, maxR) && !PointInRect(mouse, closeR) &&
+        !PointInRect(mouse, helpR)) {
       game.resizeMode = hit;
       return true;
     }
@@ -955,6 +1118,18 @@ bool HandleTitleBarInput(Game &game) {
     }
     if (PointInRect(mouse, minR)) {
       MinimizeWindow();
+      return true;
+    }
+    if (PointInRect(mouse, maxR)) {
+      if (IsWindowMaximized()) {
+        RestoreWindow();
+      } else {
+        MaximizeWindow();
+      }
+      return true;
+    }
+    if (PointInRect(mouse, helpR)) {
+      game.helpOpen = !game.helpOpen;
       return true;
     }
     if (PointInRect(mouse, dragR)) {
@@ -1005,52 +1180,72 @@ bool HandleTitleBarInput(Game &game) {
   return PointInRect(mouse, {0.0f, 0.0f, w, 34.0f});
 }
 
-void HandleUiInput(Game &game) {
-  const float s = static_cast<float>(
-      hb::Clamp(std::min(GetScreenWidth() / 1360.0, GetScreenHeight() / 820.0),
-                0.72, 1.55));
+bool HandleUiInput(Game &game) {
+  const float s = UiScale();
   const Vector2 mouse = GetMousePosition();
-  const int sw = GetScreenWidth();
-  Rectangle panel{static_cast<float>(sw) - 258.0f * s, 46.0f * s,
-                  224.0f * s, 390.0f * s};
-  const Vector2 tipCenter{panel.x + 112 * s, panel.y + 146 * s};
+  Rectangle panel = ControlPanelRect(s);
+  const Vector2 tipCenter = TipControlCenter(panel, s);
   const float tipR = 50.0f * s;
 
   if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+    if (game.helpOpen) {
+      const Rectangle help = HelpWindowRect(s);
+      const Rectangle closeR{help.x + help.width - 42.0f * s,
+                             help.y + 10.0f * s, 26.0f * s, 26.0f * s};
+      if (PointInRect(mouse, closeR)) {
+        game.helpOpen = false;
+        return true;
+      }
+      if (PointInRect(mouse, help)) {
+        return true;
+      }
+    }
     if (Vector2Distance(mouse, tipCenter) <= tipR) {
       game.tipX = hb::Clamp((mouse.x - tipCenter.x) / tipR, -1.0, 1.0);
       game.tipY = hb::Clamp(-(mouse.y - tipCenter.y) / tipR, -1.0, 1.0);
+      return true;
     }
     if (PointInRect(mouse, {panel.x + 18 * s, panel.y + 238 * s, 188 * s, 30 * s})) {
       game.tipX = 0.0;
       game.tipY = 0.0;
+      return true;
     }
     if (PointInRect(mouse, {panel.x + 18 * s, panel.y + 354 * s, 188 * s, 30 * s})) {
       game.world.ResetRack();
       game.rules.ResetRack(1 - game.rules.State().currentPlayer);
       game.phase = Phase::Aiming;
       game.power = 0.0;
+      return true;
     }
     if (game.phase == Phase::GroupChoice) {
       Rectangle modal{static_cast<float>(GetScreenWidth()) * 0.5f - 170.0f,
                       static_cast<float>(GetScreenHeight()) * 0.5f - 62.0f, 340.0f, 124.0f};
-      if (PointInRect(mouse, {modal.x + 34, modal.y + 70, 126, 32})) {
+      if (PointInRect(mouse, {modal.x + 34, modal.y + 69, 126, 34})) {
         game.phase = game.rules.ChooseGroup(BallGroup::Solids).nextPhase;
-      } else if (PointInRect(mouse, {modal.x + 180, modal.y + 70, 126, 32})) {
+        return true;
+      } else if (PointInRect(mouse, {modal.x + 180, modal.y + 69, 126, 34})) {
         game.phase = game.rules.ChooseGroup(BallGroup::Stripes).nextPhase;
+        return true;
       }
     }
   }
+  return false;
 }
 
 void UpdateGame(Game &game, const View &view) {
+  if (IsKeyPressed(KEY_ESCAPE)) {
+    if (game.power > 0.0) {
+      game.power = 0.0;
+      return;
+    }
+  }
   if (HandleTitleBarInput(game)) {
     return;
   }
-  HandleUiInput(game);
+  const bool uiHandled = HandleUiInput(game);
   const float dt = GetFrameTime();
 
-  if (game.phase == Phase::Aiming && !game.world.CueBall().pocketed &&
+  if (!uiHandled && game.phase == Phase::Aiming && !game.world.CueBall().pocketed &&
       !game.world.CueBall().sinking) {
     const Vec2 mouseWorld = ScreenToWorld(view, GetMousePosition());
     game.aim = hb::Normalize(mouseWorld - game.world.CueBall().pos);
@@ -1065,8 +1260,8 @@ void UpdateGame(Game &game, const View &view) {
       game.power = 0.0;
     }
   } else if (game.phase == Phase::BallInHand) {
-    Vec2 pos = ScreenToWorld(view, GetMousePosition());
-    if (game.world.CanPlaceCue(pos)) {
+    Vec2 pos = ClampCuePlacement(ScreenToWorld(view, GetMousePosition()));
+    if (!uiHandled && game.world.CanPlaceCue(pos)) {
       game.world.PlaceCue(pos);
       if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
         game.rules.State().ballInHand = false;
@@ -1079,7 +1274,7 @@ void UpdateGame(Game &game, const View &view) {
       auto decision = game.rules.ApplyShot(game.shotEvents, game.world);
       game.phase = decision.nextPhase;
       if (game.phase == Phase::BallInHand) {
-        game.world.PlaceCue({-hb::kTableWidth * 0.30, 0.0});
+        game.world.PlaceCue({hb::kHeadSpotX, 0.0});
       }
     }
   } else if (game.phase == Phase::RackOver && IsKeyPressed(KEY_SPACE)) {
@@ -1099,6 +1294,7 @@ void DrawGame(Game &game, const View &view) {
   ClearBackground(BLACK);
   DrawTitleBar(game);
   DrawTopStatus(game);
+  DrawFpsCounter(game.font);
   DrawTable(view);
   DrawPockets(view);
   for (const Ball &ball : game.world.Balls()) {
@@ -1119,6 +1315,7 @@ void DrawGame(Game &game, const View &view) {
                     {236, 238, 228, 150});
   }
   DrawUI(game);
+  DrawHelpWindow(game);
 
   if (game.phase == Phase::RackOver) {
     Rectangle r{static_cast<float>(GetScreenWidth()) * 0.5f - 190.0f,
@@ -1157,6 +1354,7 @@ int main(int argc, char **argv) {
   EnableDebugConsoleIfRequested(argc, argv);
   SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_UNDECORATED);
   InitWindow(1360, 820, "中式八球");
+  SetExitKey(KEY_NULL);
   SetWindowMinSize(960, 600);
   SetTargetFPS(240);
 

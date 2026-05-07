@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"D:/heyball/build/ucrt64-release/cmake_install.cmake"
+	],
+	"Parallel" : false
+}
