@@ -113,7 +113,7 @@ build CMakeFiles/heyball.dir/generated/resources.rc.obj: RC_COMPILER__heyball_un
 build heyball.exe: CXX_EXECUTABLE_LINKER__heyball_Release CMakeFiles/heyball.dir/src/main.cpp.obj CMakeFiles/heyball.dir/generated/resources.rc.obj | libheyball_core.a D$:/msys64/ucrt64/lib/libraylib.a D$:/msys64/ucrt64/lib/libglfw3.dll.a || libheyball_core.a
   CONFIG = Release
   FLAGS = -O3 -DNDEBUG
-  LINK_FLAGS = -mwindows -mwindows -static-libgcc -static-libstdc++
+  LINK_FLAGS = -mwindows -mwindows -static
   LINK_LIBRARIES = libheyball_core.a  D:/msys64/ucrt64/lib/libraylib.a  D:/msys64/ucrt64/lib/libglfw3.dll.a  -lgdi32  -lwinmm  -lopengl32  -lkernel32  -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32
   OBJECT_DIR = CMakeFiles\heyball.dir
   POST_BUILD = C:\Windows\system32\cmd.exe /C "cd /D D:\heyball\build\ucrt64-release && D:\msys64\ucrt64\bin\cmake.exe -E copy_if_different D:/msys64/ucrt64/bin/glfw3.dll D:/heyball/build/ucrt64-release/glfw3.dll"

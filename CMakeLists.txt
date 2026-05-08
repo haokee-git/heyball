@@ -58,7 +58,10 @@ target_link_libraries(heyball PRIVATE
   -lkernel32
 )
 target_compile_options(heyball PRIVATE -Wall -Wextra -Wpedantic)
-target_link_options(heyball PRIVATE -mwindows -static-libgcc -static-libstdc++)
+target_link_options(heyball PRIVATE
+  -mwindows
+  -static
+)
 add_custom_command(TARGET heyball POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "${MSYS2_UCRT64}/bin/glfw3.dll"

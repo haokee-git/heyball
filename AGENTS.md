@@ -14,8 +14,13 @@
 
 ## 协作约定
 
-- 以后所有构建命令由用户手动运行，Codex 不主动执行构建命令；若需要验证构建结果，只说明建议运行的命令并等待用户反馈。
-- 最近一次构建命令已由用户确认正确运行完毕。
+- 每次代码修改后，Codex 必须同时构建 Debug 和 Release 两套配置（`ucrt64-debug` + `ucrt64-release`），并运行测试确认通过。
+- 全量构建命令：
+
+```
+D:\msys64\ucrt64\bin\cmake.exe --build --preset ucrt64-debug
+D:\msys64\ucrt64\bin\cmake.exe --build --preset ucrt64-release
+```
 
 ---
 

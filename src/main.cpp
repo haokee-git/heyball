@@ -674,6 +674,55 @@ void DrawTable(const View &view) {
 
 void DrawDetailedCue(Vector2 cueBall, Vector2 aimDir, float ballR,
                      float power, const View &view);
+void DrawTaperedRect(Vector2 a, Vector2 b, float wA, float wB, Color color);
+
+void DrawCueShadow(const Game &game, const View &view) {
+  if (game.phase != Phase::Aiming || game.world.CueBall().pocketed ||
+      game.world.CueBall().sinking) return;
+
+  const Vector2 cue = WorldToScreen(view, game.world.CueBall().pos);
+  const Vector2 dir{static_cast<float>(game.aim.x), static_cast<float>(game.aim.y)};
+  const Vector2 forward = Vector2Normalize(dir);
+  if (forward.x == 0.0f && forward.y == 0.0f) return;
+
+  const float s = static_cast<float>(view.scale);
+  const float us = view.uiScale;
+  const float cueLen = std::min(s * 1.30f, 1700.0f);
+  const float pullback = (10.0f + static_cast<float>(game.power) * 118.0f) * us;
+  const float ballR = static_cast<float>(hb::kBallRadius * view.scale);
+  const float gap = ballR + 5.0f * us + pullback;
+
+  const float tipX = cue.x - forward.x * gap;
+  const float tipY = cue.y - forward.y * gap;
+  const float buttX = tipX - forward.x * cueLen;
+  const float buttY = tipY - forward.y * cueLen;
+
+  const float tipW = std::max(0.005f * s, 2.5f * us);
+  const float buttW = std::max(0.016f * s, 7.5f * us);
+  const float jt = 0.35f;
+
+  auto P = [&](float t) -> Vector2 {
+    return Vector2{buttX + (tipX - buttX) * t, buttY + (tipY - buttY) * t};
+  };
+  auto W = [&](float t) -> float {
+    if (t <= jt) return buttW;
+    if (t <= 0.96f) return buttW + (tipW - buttW) * ((t - jt) / (0.96f - jt));
+    return tipW;
+  };
+
+  const float sx = 4.5f * us;
+  const float sy = 5.0f * us;
+
+  // Shadow butt: cylinder section
+  DrawLineEx({P(0.0f).x + sx, P(0.0f).y + sy},
+             {P(jt).x + sx, P(jt).y + sy},
+             buttW * 1.05f, {0, 0, 0, 72});
+
+  // Shadow shaft: from joint to tip
+  const Vector2 sTip = {P(1.0f).x + sx, P(1.0f).y + sy};
+  DrawTaperedRect({P(jt).x + sx, P(jt).y + sy}, sTip,
+                  W(jt) * 1.05f, tipW * 0.8f, {0, 0, 0, 72});
+}
 
 void DrawCueAndAim(const Game &game, const View &view) {
   if (game.phase != Phase::Aiming || game.world.CueBall().pocketed ||
@@ -752,121 +801,98 @@ Rectangle HelpWindowRect(float s) {
   return {108.0f * s, 54.0f * s, 520.0f * s, 314.0f * s};
 }
 
-void DrawTaperedSection(Vector2 a, Vector2 b, Vector2 normal, float widthA,
-                        float widthB, Color color) {
-  const Vector2 aL{a.x + normal.x * widthA * 0.5f,
-                   a.y + normal.y * widthA * 0.5f};
-  const Vector2 aR{a.x - normal.x * widthA * 0.5f,
-                   a.y - normal.y * widthA * 0.5f};
-  const Vector2 bL{b.x + normal.x * widthB * 0.5f,
-                   b.y + normal.y * widthB * 0.5f};
-  const Vector2 bR{b.x - normal.x * widthB * 0.5f,
-                   b.y - normal.y * widthB * 0.5f};
-  DrawTriangle(aL, aR, bR, color);
-  DrawTriangle(aL, bR, bL, color);
+void DrawTaperedRect(Vector2 a, Vector2 b, float wA, float wB, Color color) {
+  const float dx = b.x - a.x, dy = b.y - a.y;
+  const float len = sqrtf(dx * dx + dy * dy);
+  if (len < 0.5f) return;
+  const float angle = atan2f(dy, dx) * RAD2DEG;
+  const int segs = std::max(1, static_cast<int>(len / 14.0f));
+  for (int i = 0; i < segs; i++) {
+    const float t0 = static_cast<float>(i) / segs;
+    const float t1 = static_cast<float>(i + 1) / segs;
+    const float w = (wA + (wB - wA) * (t0 + t1) * 0.5f);
+    const Vector2 p0 = {a.x + dx * t0, a.y + dy * t0};
+    const Vector2 p1 = {a.x + dx * t1, a.y + dy * t1};
+    const float sl = sqrtf((p1.x - p0.x) * (p1.x - p0.x) + (p1.y - p0.y) * (p1.y - p0.y));
+    const Vector2 center = {(p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f};
+    DrawRectanglePro({center.x, center.y, sl + 0.5f, w},
+                     {sl * 0.5f + 0.25f, w * 0.5f}, angle, color);
+  }
 }
-
-
 
 void DrawDetailedCue(Vector2 cueBall, Vector2 aimDir, float ballR,
                      float power, const View &view) {
   const Vector2 forward = Vector2Normalize(aimDir);
   if (forward.x == 0.0f && forward.y == 0.0f) return;
-  const Vector2 perp{-forward.y, forward.x};
+
+  BeginBlendMode(BLEND_ALPHA);
+  EndBlendMode();
 
   const float s = static_cast<float>(view.scale);
   const float us = view.uiScale;
-  const float cueLen = std::min(s * 1.47f, 1900.0f);
-  const float gap = ballR + 4.0f * us + (10.0f + power * 118.0f) * us;
+  const float cueLen = std::min(s * 1.30f, 1700.0f);
+  const float pullback = (10.0f + power * 118.0f) * us;
+  const float gap = ballR + 5.0f * us + pullback;
+
   const float tipX = cueBall.x - forward.x * gap;
   const float tipY = cueBall.y - forward.y * gap;
   const float buttX = tipX - forward.x * cueLen;
   const float buttY = tipY - forward.y * cueLen;
 
-  // Realistic widths: butt 31mm, joint 21mm, tip 13mm (scaled to screen)
-  const float tw = std::max(13.0f * us, 0.032f * s);
-  const float bw = std::max(std::max(tw * 2.8f, 0.080f * s), 38.0f * us);
-  const float jt_t = 0.45f;  // joint position
-  const float jw = bw + (tw - bw) * jt_t * 0.65f;
+  const float tipW = std::max(0.005f * s, 2.5f * us);
+  const float buttW = std::max(0.016f * s, 7.5f * us);
+  const float jt = 0.35f;
 
-  const auto At = [&](float t) -> Vector2 {
+  const auto P = [&](float t) -> Vector2 {
     return {buttX + (tipX - buttX) * t, buttY + (tipY - buttY) * t};
   };
-  // Butt width: slight taper from bw to jw
-  const auto BW = [&](float t) -> float { return bw + (jw - bw) * (t / jt_t); };
-  // Shaft width: taper from jw to tw
-  const auto SW = [&](float t) -> float {
-    if (t <= jt_t) return jw;
-    return jw + (tw - jw) * ((t - jt_t) / (0.96f - jt_t));
+  const auto W = [&](float t) -> float {
+    if (t <= jt) return buttW;
+    if (t <= 0.96f) return buttW + (tipW - buttW) * ((t - jt) / (0.96f - jt));
+    return tipW;
   };
 
-  // --- drawing ---
-  // shadow
-  const float sx = 4.5f * us;
-  const float sy = 5.0f * us;
-  DrawTaperedSection({buttX + sx, buttY + sy}, {tipX + sx, tipY + sy},
-                     perp, bw * 1.14f, tw * 1.14f, {0, 0, 0, 80});
+  DrawLineEx(P(0.0f), P(jt), buttW, {92, 48, 18, 255});
+  DrawTaperedRect(P(jt), P(0.96f), W(jt), W(0.96f), {195, 165, 110, 255});
 
-  // shaft: full-length maple base (butt will cover rear)
-  DrawTaperedSection(At(jt_t), At(0.96f), perp, SW(jt_t), SW(0.96f),
-                     {232, 216, 182, 255});
+  DrawLineEx(P(0.0f), P(0.025f), W(0.0f) + 1.0f * us, {16, 14, 12, 255});
+  DrawLineEx(P(0.023f), P(0.036f), W(0.023f) + 1.5f * us, {180, 148, 95, 255});
 
-  // butt: dark hardwood (ebony/rosewood)
-  DrawTaperedSection(At(0.02f), At(jt_t), perp, BW(0.02f), BW(jt_t),
-                     {56, 28, 12, 255});
+  DrawTaperedRect(P(jt), P(jt + 0.015f), W(jt) + 1.5f * us, W(jt + 0.015f) + 1.5f * us, {156, 163, 171, 255});
+  DrawLineEx(P(jt - 0.008f), P(jt), W(jt - 0.008f) + 1.0f * us, {195, 190, 180, 255});
 
-  // bumper (black rubber)
-  DrawTaperedSection(At(0.000f), At(0.023f), perp, bw * 1.08f, BW(0.023f),
-                     {16, 14, 13, 255});
-  // bumper ring
-  DrawTaperedSection(At(0.022f), At(0.032f), perp, BW(0.022f) + 2.2f * us,
-                     BW(0.032f) + 1.8f * us, {190, 166, 120, 255});
+  auto drawRing = [&](float t1, float t2, float extra, Color color) {
+    DrawTaperedRect(P(t1), P(t2), W(t1) + extra * us, W(t2) + extra * us, color);
+  };
+  drawRing(0.07f, 0.082f, 1.5f, {140, 145, 152, 255});
+  drawRing(0.086f, 0.094f, 0.6f, {200, 195, 185, 255});
+  drawRing(0.11f, 0.122f, 1.5f, {140, 145, 152, 255});
+  drawRing(0.126f, 0.134f, 0.6f, {200, 195, 185, 255});
 
-  // linen grip wrap (15%-30% of butt)
-  DrawTaperedSection(At(0.14f), At(0.30f), perp, BW(0.14f) + 0.5f * us,
-                     BW(0.30f) + 0.5f * us, {42, 38, 34, 255});
-  // grip top border
-  DrawTaperedSection(At(0.14f), At(0.148f), perp, BW(0.14f) + 2.0f * us,
-                     BW(0.148f) + 2.0f * us, {186, 162, 115, 255});
-  // grip bottom border
-  DrawTaperedSection(At(0.292f), At(0.30f), perp, BW(0.292f) + 2.0f * us,
-                     BW(0.30f) + 2.0f * us, {186, 162, 115, 255});
+  drawRing(0.14f, 0.33f, 0.0f, {18, 20, 22, 255});
+  drawRing(0.14f, 0.148f, 1.2f, {160, 152, 140, 255});
+  drawRing(0.322f, 0.33f, 1.2f, {160, 152, 140, 255});
 
-  // decorative brass rings on butt
-  DrawTaperedSection(At(0.055f), At(0.067f), perp, BW(0.055f) + 2.4f * us,
-                     BW(0.067f) + 2.4f * us, {212, 193, 146, 255});
-  DrawTaperedSection(At(0.095f), At(0.107f), perp, BW(0.095f) + 2.4f * us,
-                     BW(0.107f) + 2.4f * us, {212, 193, 146, 255});
+  DrawTaperedRect(P(0.96f), P(0.984f), W(0.96f) + 0.3f * us, W(0.984f), {230, 228, 222, 255});
+  DrawTaperedRect(P(0.984f), P(1.0f), W(0.984f) * 0.85f, tipW * 0.5f, {28, 52, 82, 255});
 
-  // joint collar (stainless steel)
-  DrawTaperedSection(At(jt_t - 0.015f), At(jt_t), perp,
-                     BW(jt_t - 0.015f) + 3.0f * us,
-                     BW(jt_t) + 3.5f * us, {195, 191, 184, 255});
-  DrawTaperedSection(At(jt_t - 0.02f), At(jt_t - 0.013f), perp,
-                     BW(jt_t - 0.02f) + 2.8f * us,
-                     BW(jt_t - 0.013f) + 2.8f * us, {44, 26, 16, 255});
+  const Vector2 perp{-forward.y, forward.x};
 
-  // shaft grain lines
+  DrawLineEx({P(0.01f).x + perp.x * W(0.01f) * 0.36f, P(0.01f).y + perp.y * W(0.01f) * 0.36f},
+             {P(0.96f).x + perp.x * tipW * 0.28f, P(0.96f).y + perp.y * tipW * 0.28f},
+             1.0f * us, {255, 255, 255, 85});
+
+  DrawLineEx({P(0.01f).x - perp.x * W(0.01f) * 0.40f, P(0.01f).y - perp.y * W(0.01f) * 0.40f},
+             {P(0.96f).x - perp.x * tipW * 0.36f, P(0.96f).y - perp.y * tipW * 0.36f},
+             0.9f * us, {0, 0, 0, 32});
+
   for (int g = -1; g <= 1; g += 2) {
-    const float gOff = g * SW(0.55f) * 0.16f;
-    const Vector2 sa = {At(0.50f).x + perp.x * gOff,
-                        At(0.50f).y + perp.y * gOff};
-    const Vector2 sb = {At(0.93f).x + perp.x * gOff * 0.35f,
-                        At(0.93f).y + perp.y * gOff * 0.35f};
-    DrawLineEx(sa, sb, std::max(0.7f, us * 0.9f), {195, 171, 120, 200});
+    const float midW = (tipW + buttW) * 0.5f;
+    const float gOff = g * midW * 0.16f;
+    DrawLineEx({P(0.45f).x + perp.x * gOff, P(0.45f).y + perp.y * gOff},
+               {P(0.92f).x + perp.x * gOff * 0.4f, P(0.92f).y + perp.y * gOff * 0.4f},
+               0.8f * us, {130, 100, 45, 45});
   }
-
-  // ferrule (ivory white)
-  DrawTaperedSection(At(0.96f), At(0.985f), perp, SW(0.96f) + 0.7f * us,
-                     SW(0.985f) + 0.2f * us, {238, 234, 225, 255});
-
-  // tip (dark leather)
-  DrawTaperedSection(At(0.985f), At(1.00f), perp, SW(0.985f) * 0.88f,
-                     SW(1.00f) * 0.65f, {54, 36, 22, 255});
-
-  // center gloss line
-  DrawLineEx(At(0.05f), At(0.95f),
-             std::max(1.3f, tw * 0.23f), {252, 244, 226, 140});
 }
 
 void DrawUI(Game &game) {
@@ -1291,6 +1317,7 @@ void DrawGame(Game &game, const View &view) {
     }
   }
   DrawCueAndAim(game, view);
+  DrawCueShadow(game, view);
   if (game.phase == Phase::BallInHand) {
     const Vector2 p = WorldToScreen(view, game.world.CueBall().pos);
     DrawCircleLines(static_cast<int>(p.x), static_cast<int>(p.y),

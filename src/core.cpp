@@ -9,12 +9,12 @@ namespace {
 constexpr double kRestitutionBall = 0.965;
 constexpr double kRestitutionRail = 0.780;
 constexpr double kGravity = 9.80665;
-constexpr double kSlideMu = 0.245;
-constexpr double kRollDrag = 0.090;
+constexpr double kSlideMu = 0.280;
+constexpr double kRollDrag = 0.260;
 constexpr double kSideDecay = 0.42;
 constexpr double kCueMaxSpeed = 4.85;
-constexpr double kRailGrip = 0.34;
-constexpr double kRailSpinLoss = 0.94;
+constexpr double kRailGrip = 0.28;
+constexpr double kRailSpinLoss = 0.97;
 std::array<Vec2, 6> PocketCenters() {
   return {{{-kTableWidth * 0.5, -kTableHeight * 0.5},
            {0.0, -kTableHeight * 0.5},
@@ -424,8 +424,8 @@ void PhysicsWorld::StrikeCue(const ShotParams &shot) {
   cue.vel += aim * speed;
 
   const Vec2 rollAxis = Perp(aim);
-  cue.rollOmega += rollAxis * (shot.tipY * speed * 1.8 / kBallRadius);
-  cue.sideOmega += shot.tipX * speed * 5.5;
+  cue.rollOmega += rollAxis * (shot.tipY * speed * 1.4 / kBallRadius);
+  cue.sideOmega += shot.tipX * speed * 25.0;
 }
 
 bool PhysicsWorld::IsMoving(double threshold) const {
@@ -554,8 +554,10 @@ void PhysicsWorld::ApplyFriction(Ball &ball, double dt) {
       const Vec2 dir = Normalize(slip);
       const double amount = std::min(slipSpeed, kSlideMu * kGravity * dt);
       const Vec2 adjust = dir * amount;
-      ball.vel -= adjust * 0.46;
-      surface += adjust * 1.18;
+      constexpr double kLinFrac = 1.0 / 3.5;
+      constexpr double kAngFrac = 2.5 / 3.5;
+      ball.vel -= adjust * kLinFrac;
+      surface += adjust * kAngFrac;
       ball.rollOmega = {-surface.y / kBallRadius, surface.x / kBallRadius};
     } else {
       ball.rollOmega = {-ball.vel.y / kBallRadius, ball.vel.x / kBallRadius};
@@ -651,8 +653,8 @@ void PhysicsWorld::ResolveBallContacts(ShotEvents *events) {
         const Vec2 t = Perp(n);
         const double tangentSpeed =
             Dot(rel, t) - (a.sideOmega + b.sideOmega) * kBallRadius;
-        double jt = -tangentSpeed / 28.0;
-        const double maxTangent = std::abs(jn) * 0.025;
+        double jt = -tangentSpeed / 3.4;
+        const double maxTangent = std::abs(jn) * 0.10;
         jt = Clamp(jt, -maxTangent, maxTangent);
         a.vel -= t * jt;
         b.vel += t * jt;
