@@ -1,8 +1,7 @@
-﻿#include "core.hpp"
-
+#include "core.hpp"
+#include "network.hpp"
 #include <raylib.h>
 #include <raymath.h>
-
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -13,32 +12,171 @@
 #include <vector>
 #ifdef _WIN32
 extern "C" __declspec(dllimport) int __stdcall AllocConsole(void);
-extern "C" __declspec(dllimport) void *__stdcall GetModuleHandleA(const char *);
-extern "C" __declspec(dllimport) void *__stdcall FindResourceA(void *, const char *, const char *);
-extern "C" __declspec(dllimport) void *__stdcall LoadResource(void *, void *);
-extern "C" __declspec(dllimport) unsigned long __stdcall SizeofResource(void *, void *);
-extern "C" __declspec(dllimport) void *__stdcall LockResource(void *);
 #endif
-
 namespace {
-
 using hb::Ball;
 using hb::BallGroup;
 using hb::Phase;
 using hb::ShotEvents;
 using hb::ShotParams;
 using hb::Vec2;
-
-constexpr int kPingFangResourceId = 101;
-constexpr int kWinResourceTypeRCDATA = 10;
-constexpr int kUiFontSize = 40;
-
+constexpr int kUiFontSize = 64;
+void Utf8PopBack(std::string &s) {
+  if (s.empty()) return;
+  size_t i = s.size() - 1;
+  while (i > 0 && (s[i] & 0xC0) == 0x80) --i;
+  s.resize(i);
+}
+std::vector<int> BuildFontCodepoints() {
+  std::vector<int> codepoints;
+  for (int c = 32; c <= 126; ++c) codepoints.push_back(c);
+  for (int c = 161; c <= 255; ++c) codepoints.push_back(c);
+  for (int c = 256; c <= 383; ++c) codepoints.push_back(c);
+  for (int c = 8192; c <= 8303; ++c) codepoints.push_back(c);
+  for (int c = 12288; c <= 12351; ++c) codepoints.push_back(c);
+  for (int c = 65280; c <= 65519; ++c) codepoints.push_back(c);
+  static const int extra[] = {
+    0x3001, 0x3002, 0x4E00, 0x4E0A, 0x4E0B, 0x4E0D, 0x4E14, 0x4E2D,
+    0x4E3A, 0x4E8C, 0x4EBA, 0x4F4D, 0x4F4E, 0x4FA7, 0x505C, 0x5148,
+    0x5165, 0x5168, 0x516B, 0x5173, 0x518D, 0x51C6, 0x51FB, 0x5217,
+    0x5219, 0x521B, 0x5224, 0x5230, 0x5236, 0x5237, 0x524D, 0x529B,
+    0x52A0, 0x52A8, 0x52A9, 0x534A, 0x5355, 0x539F, 0x53CC, 0x53D6,
+    0x53EF, 0x53F0, 0x53F3, 0x53F7, 0x5408, 0x540D, 0x540E, 0x5411,
+    0x5426, 0x56DE, 0x5728, 0x57DF, 0x585E, 0x590D, 0x5931, 0x59CB,
+    0x5B9A, 0x5BB6, 0x5BC6, 0x5BF9, 0x5C31, 0x5C40, 0x5DE6, 0x5DF1,
+    0x5DF2, 0x5E2E, 0x5E93, 0x5EA6, 0x5EFA, 0x5F00, 0x5F0F, 0x5F85,
+    0x5F97, 0x5FC5, 0x6001, 0x620F, 0x6211, 0x6216, 0x6218, 0x623F,
+    0x624B, 0x6253, 0x62E9, 0x6309, 0x63A5, 0x63A7, 0x6446, 0x653E,
+    0x6574, 0x65AD, 0x65B0, 0x65B9, 0x65E0, 0x65F6, 0x6682, 0x6709,
+    0x672A, 0x672C, 0x673A, 0x6746, 0x677F, 0x6807, 0x683C, 0x6B21,
+    0x6CA1, 0x6CD5, 0x6D88, 0x6E38, 0x6EDA, 0x70B9, 0x7136, 0x72AF,
+    0x72B6, 0x73A9, 0x7403, 0x7531, 0x767D, 0x7684, 0x76EE, 0x7784,
+    0x7801, 0x786E, 0x78B0, 0x79FB, 0x7A7A, 0x7B49, 0x7EBF, 0x7EC4,
+    0x7EE7, 0x7EEA, 0x7EED, 0x7F51, 0x7F6E, 0x8005, 0x8054, 0x80DC,
+    0x81EA, 0x8272, 0x83B7, 0x83DC, 0x843D, 0x84C4, 0x8868, 0x888B,
+    0x89C4, 0x89E6, 0x8BA4, 0x8BBE, 0x8BEF, 0x8BF7, 0x8C03, 0x8D25,
+    0x8D62, 0x8F6E, 0x8F93, 0x8FD8, 0x8FDB, 0x8FDE, 0x9009, 0x91CD,
+    0x94AE, 0x9519, 0x952E, 0x95F4, 0x9762, 0x987B, 0x9996, 0x9AD8,
+    0x9ED1, 0x9F20, 0xFF08, 0xFF09, 0xFF0C, 0xFF1A, 0xFF1B,
+  };
+  for (int c : extra) {
+    codepoints.push_back(c);
+  }
+  return codepoints;
+}
+void AppendUtf8(std::string &s, int codepoint) {
+  if (codepoint < 0x80) {
+    s += static_cast<char>(codepoint);
+  } else if (codepoint < 0x800) {
+    s += static_cast<char>(0xC0 | (codepoint >> 6));
+    s += static_cast<char>(0x80 | (codepoint & 0x3F));
+  } else if (codepoint < 0x10000) {
+    s += static_cast<char>(0xE0 | (codepoint >> 12));
+    s += static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
+    s += static_cast<char>(0x80 | (codepoint & 0x3F));
+  } else if (codepoint < 0x110000) {
+    s += static_cast<char>(0xF0 | (codepoint >> 18));
+    s += static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F));
+    s += static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
+    s += static_cast<char>(0x80 | (codepoint & 0x3F));
+  }
+}
+int Utf8PrevPos(const std::string &s, int pos) {
+  if (pos <= 0 || s.empty()) return 0;
+  size_t i = static_cast<size_t>(pos);
+  do { --i; } while (i > 0 && (s[i] & 0xC0) == 0x80);
+  return static_cast<int>(i);
+}
+int Utf8NextPos(const std::string &s, int pos) {
+  if (pos < 0 || static_cast<size_t>(pos) >= s.size()) return static_cast<int>(s.size());
+  size_t i = static_cast<size_t>(pos);
+  if ((s[i] & 0x80) == 0) return static_cast<int>(i + 1);
+  size_t len = s.size();
+  if ((s[i] & 0xE0) == 0xC0) { if (i + 1 < len) return static_cast<int>(i + 2); }
+  else if ((s[i] & 0xF0) == 0xE0) { if (i + 2 < len) return static_cast<int>(i + 3); }
+  else if ((s[i] & 0xF8) == 0xF0) { if (i + 3 < len) return static_cast<int>(i + 4); }
+  return static_cast<int>(i + 1);
+}
+void TextInsertAt(std::string &s, int &cursor, int codepoint) {
+  if (codepoint < 0x80) {
+    s.insert(static_cast<size_t>(cursor), 1, static_cast<char>(codepoint));
+    ++cursor;
+  } else if (codepoint < 0x800) {
+    s.insert(static_cast<size_t>(cursor), 1, static_cast<char>(0xC0 | (codepoint >> 6)));
+    s.insert(static_cast<size_t>(cursor) + 1, 1, static_cast<char>(0x80 | (codepoint & 0x3F)));
+    cursor += 2;
+  } else if (codepoint < 0x10000) {
+    s.insert(static_cast<size_t>(cursor), 1, static_cast<char>(0xE0 | (codepoint >> 12)));
+    s.insert(static_cast<size_t>(cursor) + 1, 1, static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
+    s.insert(static_cast<size_t>(cursor) + 2, 1, static_cast<char>(0x80 | (codepoint & 0x3F)));
+    cursor += 3;
+  } else if (codepoint < 0x110000) {
+    s.insert(static_cast<size_t>(cursor), 1, static_cast<char>(0xF0 | (codepoint >> 18)));
+    s.insert(static_cast<size_t>(cursor) + 1, 1, static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F)));
+    s.insert(static_cast<size_t>(cursor) + 2, 1, static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
+    s.insert(static_cast<size_t>(cursor) + 3, 1, static_cast<char>(0x80 | (codepoint & 0x3F)));
+    cursor += 4;
+  }
+}
+void TextEraseBefore(std::string &s, int &cursor) {
+  if (cursor <= 0) return;
+  int prev = Utf8PrevPos(s, cursor);
+  s.erase(static_cast<size_t>(prev), static_cast<size_t>(cursor - prev));
+  cursor = prev;
+}
+void TextEraseAfter(std::string &s, int &cursor) {
+  if (cursor >= static_cast<int>(s.size())) return;
+  int next = Utf8NextPos(s, cursor);
+  s.erase(static_cast<size_t>(cursor), static_cast<size_t>(next - cursor));
+}
+int TextCursorFromMouseX(Font font, const std::string &text, float mouseX, float textX, float fontSize) {
+  float relX = mouseX - textX;
+  if (relX <= 0) return 0;
+  float totalW = 0;
+  int cursor = 0;
+  while (cursor < static_cast<int>(text.size())) {
+    int next = Utf8NextPos(text, cursor);
+    std::string ch = text.substr(static_cast<size_t>(cursor), static_cast<size_t>(next - cursor));
+    float w = MeasureTextEx(font, ch.c_str(), fontSize, 0.0f).x;
+    if (totalW + w * 0.5f > relX) return cursor;
+    totalW += w;
+    cursor = next;
+  }
+  return static_cast<int>(text.size());
+}
+struct RepeatKey {
+  int key = 0;
+  double lastRepeat = 0.0;
+  bool firstDelay = true;
+  bool fired = false;
+  void reset() { key = 0; lastRepeat = 0.0; firstDelay = true; fired = false; }
+  void begin(int k, double now) {
+    if (key != k) {
+      key = k;
+      lastRepeat = now;
+      firstDelay = true;
+      fired = true;
+    }
+  }
+  void end(int k) { if (key == k) key = 0; }
+  bool poll(double now) {
+    if (key == 0) return false;
+    double delay = firstDelay ? 0.42 : 0.055;
+    if (now - lastRepeat >= delay) {
+      lastRepeat = now;
+      firstDelay = false;
+      fired = true;
+      return true;
+    }
+    return false;
+  }
+};
 struct View {
   Rectangle play{};
   double scale = 1.0;
   float uiScale = 1.0f;
 };
-
+enum class AppMode { Single, Lobby, RoomHost, RoomClient, PlayingOnline };
 struct Game {
   hb::PhysicsWorld world;
   hb::RulesEngine rules;
@@ -54,8 +192,37 @@ struct Game {
   int resizeMode = 0;
   bool requestClose = false;
   bool helpOpen = false;
+  // Network
+  AppMode appMode = AppMode::Single;
+  hb::NetworkHost host;
+  hb::NetworkClient client;
+  std::vector<hb::RoomInfo> roomList;
+  std::string roomName;
+  std::string roomPassword;
+  bool hostIsPlayer1 = true;
+  bool amReady = false;
+  bool opReady = false;
+  std::vector<std::string> chatHistory;
+  bool chatInputActive = false;
+  std::string chatInputBuf;
+  int chatInputCursor = 0;
+  RepeatKey repeatKey;
+  double lastAimSend = 0.0;
+  double lastPosSend = 0.0;
+  bool showCreateDlg = false;
+  std::string createRoomName;
+  int createNameCursor = 0;
+  std::string createRoomPwd;
+  int createPwdCursor = 0;
+  bool createHostIsP1 = true;
+  std::string joinPwdInput;
+  int joinPwdCursor = 0;
+  int onlineTurn = -1;  // 0 or 1, who plays on this machine (host perspective)
+  int assignedPlayer = -1;  // received from host via ASSIGN message
+  std::array<hb::Ball, 16> syncedBalls{};
+  double opAimTipX = 0.0, opAimTipY = 0.0, opPower = 0.0;
+  int createDlgFocus = 0;  // 0=room name, 1=password
 };
-
 enum ResizeEdge {
   ResizeNone = 0,
   ResizeLeft = 1,
@@ -63,7 +230,6 @@ enum ResizeEdge {
   ResizeTop = 4,
   ResizeBottom = 8
 };
-
 View MakeView(int sw, int sh) {
   const float uiScale = static_cast<float>(
       hb::Clamp(std::min(sw / 1360.0, sh / 820.0), 0.72, 1.55));
@@ -81,17 +247,14 @@ View MakeView(int sw, int sh) {
   Rectangle r{margin, (static_cast<float>(sh) - h) * 0.5f, w, h};
   return {r, w / hb::kTableWidth, uiScale};
 }
-
 Vector2 WorldToScreen(const View &view, Vec2 p) {
   return {view.play.x + view.play.width * 0.5f + static_cast<float>(p.x * view.scale),
           view.play.y + view.play.height * 0.5f + static_cast<float>(p.y * view.scale)};
 }
-
 Vec2 ScreenToWorld(const View &view, Vector2 p) {
   return {(p.x - (view.play.x + view.play.width * 0.5f)) / view.scale,
           (p.y - (view.play.y + view.play.height * 0.5f)) / view.scale};
 }
-
 Vec2 ClampCuePlacement(Vec2 pos) {
   const double left = -hb::kTableWidth * 0.5 + hb::kCushionNoseInset + hb::kBallRadius;
   const double right = hb::kTableWidth * 0.5 - hb::kCushionNoseInset - hb::kBallRadius;
@@ -99,14 +262,12 @@ Vec2 ClampCuePlacement(Vec2 pos) {
   const double bottom = hb::kTableHeight * 0.5 - hb::kCushionNoseInset - hb::kBallRadius;
   return {hb::Clamp(pos.x, left, right), hb::Clamp(pos.y, top, bottom)};
 }
-
 Vec2 RayToTableEdge(Vec2 origin, Vec2 dir) {
   const double left = -hb::kTableWidth * 0.5 + hb::kCushionNoseInset;
   const double right = hb::kTableWidth * 0.5 - hb::kCushionNoseInset;
   const double top = -hb::kTableHeight * 0.5 + hb::kCushionNoseInset;
   const double bottom = hb::kTableHeight * 0.5 - hb::kCushionNoseInset;
   double best = 1e9;
-
   if (std::abs(dir.x) > 1e-8) {
     const double tLeft = (left - origin.x) / dir.x;
     const double yLeft = origin.y + dir.y * tLeft;
@@ -119,7 +280,6 @@ Vec2 RayToTableEdge(Vec2 origin, Vec2 dir) {
       best = std::min(best, tRight);
     }
   }
-
   if (std::abs(dir.y) > 1e-8) {
     const double tTop = (top - origin.y) / dir.y;
     const double xTop = origin.x + dir.x * tTop;
@@ -132,10 +292,8 @@ Vec2 RayToTableEdge(Vec2 origin, Vec2 dir) {
       best = std::min(best, tBottom);
     }
   }
-
   return origin + dir * (best == 1e9 ? 1.0 : best);
 }
-
 int FirstAimTarget(const hb::PhysicsWorld &world, Vec2 origin, Vec2 dir, Vec2 *ghost) {
   double best = 1e9;
   int target = -1;
@@ -165,113 +323,29 @@ int FirstAimTarget(const hb::PhysicsWorld &world, Vec2 origin, Vec2 dir, Vec2 *g
   }
   return target;
 }
-
 bool PointInRect(Vector2 p, Rectangle r) {
   return p.x >= r.x && p.x <= r.x + r.width && p.y >= r.y &&
          p.y <= r.y + r.height;
 }
-
-void AddCodepoint(std::vector<int> &codepoints, int codepoint) {
-  if (std::find(codepoints.begin(), codepoints.end(), codepoint) ==
-      codepoints.end()) {
-    codepoints.push_back(codepoint);
-  }
+Font LoadGameFont(std::vector<int> &codepoints) {
+  Font font = LoadFontEx("PingFangSC.otf", kUiFontSize,
+                         codepoints.data(), static_cast<int>(codepoints.size()));
+  if (font.texture.id != 0) return font;
+  font = LoadFontEx("C:/Windows/Fonts/msyh.ttc", kUiFontSize,
+                    codepoints.data(), static_cast<int>(codepoints.size()));
+  if (font.texture.id != 0) return font;
+  return Font{};
 }
-
-void AddUtf8Codepoints(std::vector<int> &codepoints, const char *text) {
-  const auto *p = reinterpret_cast<const unsigned char *>(text);
-  while (*p != 0) {
-    int cp = 0;
-    int bytes = 0;
-    if ((*p & 0x80) == 0) {
-      cp = *p;
-      bytes = 1;
-    } else if ((*p & 0xE0) == 0xC0) {
-      cp = *p & 0x1F;
-      bytes = 2;
-    } else if ((*p & 0xF0) == 0xE0) {
-      cp = *p & 0x0F;
-      bytes = 3;
-    } else if ((*p & 0xF8) == 0xF0) {
-      cp = *p & 0x07;
-      bytes = 4;
-    } else {
-      ++p;
-      continue;
-    }
-    for (int i = 1; i < bytes && p[i] != 0; ++i) {
-      cp = (cp << 6) | (p[i] & 0x3F);
-    }
-    AddCodepoint(codepoints, cp);
-    p += bytes;
-  }
-}
-
-std::vector<int> BuildFontCodepoints() {
-  std::vector<int> codepoints;
-  for (int c = 32; c <= 126; ++c) {
-    codepoints.push_back(c);
-  }
-  AddUtf8Codepoints(
-      codepoints,
-      "中式八球双人对战当前目前击球号玩家组未定全色半控制点左右高低还原力度"
-      "重新摆选择或按空格键开始下一局白落袋获得自由首次触错误碰后无且库"
-      "开不合法打进复位方继续赢得本局轮到目标请选择");
-  AddUtf8Codepoints(codepoints, "：，×");
-  AddUtf8Codepoints(
-      codepoints,
-      "帮助规则两名轮流先合法打完自己的再打进获胜犯规对手自动判定操作移动鼠标瞄准滚轮"
-      "下滑蓄力上滑出杆右侧击点盘调整高低杆和左右塞按钮回到中杆确认放置清空关闭：，。；、×");
-  return codepoints;
-}
-
-const char *ResourceId(int id) {
-  return reinterpret_cast<const char *>(
-      static_cast<std::uintptr_t>(static_cast<unsigned short>(id)));
-}
-
-Font LoadPingFangFont(std::vector<int> &codepoints) {
-#ifdef _WIN32
-  void *module = GetModuleHandleA(nullptr);
-  if (module) {
-    void *resource =
-        FindResourceA(module, ResourceId(kPingFangResourceId),
-                      ResourceId(kWinResourceTypeRCDATA));
-    if (resource) {
-      const unsigned long size = SizeofResource(module, resource);
-      void *handle = LoadResource(module, resource);
-      const auto *data = static_cast<const unsigned char *>(LockResource(handle));
-      if (data && size > 0 && size <= 0x7fffffffUL) {
-        Font font = LoadFontFromMemory(".otf", data, static_cast<int>(size),
-                                       kUiFontSize, codepoints.data(),
-                                       static_cast<int>(codepoints.size()));
-        if (font.texture.id != 0) {
-          return font;
-        }
-      }
-    }
-  }
-#endif
-  return LoadFontEx("C:/Windows/Fonts/PingFangSC.otf", kUiFontSize, codepoints.data(),
-                    static_cast<int>(codepoints.size()));
-}
-
 void ConfigureFontTexture(Font &font) {
-  if (font.texture.id == 0) {
-    return;
-  }
+  if (font.texture.id == 0) return;
   SetTextureFilter(font.texture, TEXTURE_FILTER_BILINEAR);
+  SetTextureWrap(font.texture, TEXTURE_WRAP_CLAMP);
 }
-
 void DrawTextF(Font font, const char *text, Vector2 pos, float size, Color color) {
   const Vector2 p{std::round(pos.x), std::round(pos.y)};
   const float fs = std::max(1.0f, std::round(size));
-  DrawTextEx(font, text, {p.x + 1.0f, p.y + 1.0f}, fs, 0.0f,
-             {0, 0, 0,
-              static_cast<unsigned char>(std::min(180, static_cast<int>(color.a) * 3 / 5))});
   DrawTextEx(font, text, p, fs, 0.0f, color);
 }
-
 void DrawRoundedFillWithBorder(Rectangle r, float roundness, int segments,
                                Color fill, Color border) {
   Rectangle px{std::round(r.x), std::round(r.y), std::round(r.width),
@@ -281,7 +355,6 @@ void DrawRoundedFillWithBorder(Rectangle r, float roundness, int segments,
                         px.height - 2.0f};
   DrawRectangleRounded(inner, roundness, segments, fill);
 }
-
 Color BallColor(int n) {
   switch (n) {
   case 1:
@@ -311,7 +384,9 @@ Color BallColor(int n) {
     return {235, 232, 215, 255};
   }
 }
-
+void DrawBackdrop() {
+  DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), {0, 0, 0, 140});
+}
 Color MixColor(Color a, Color b, float t) {
   t = static_cast<float>(hb::Clamp(t, 0.0, 1.0));
   return {
@@ -320,37 +395,31 @@ Color MixColor(Color a, Color b, float t) {
       static_cast<unsigned char>(a.b * (1.0f - t) + b.b * t),
       static_cast<unsigned char>(a.a * (1.0f - t) + b.a * t)};
 }
-
 Vector3 BallLocalFromWorld(const Ball &ball, Vector3 world) {
   const auto &m = ball.orientation;
   return {static_cast<float>(world.x * m[0] + world.y * m[3] + world.z * m[6]),
           static_cast<float>(world.x * m[1] + world.y * m[4] + world.z * m[7]),
           static_cast<float>(world.x * m[2] + world.y * m[5] + world.z * m[8])};
 }
-
 Vector3 BallWorldFromLocal(const Ball &ball, Vector3 local) {
   const auto &m = ball.orientation;
   return {static_cast<float>(local.x * m[0] + local.y * m[1] + local.z * m[2]),
           static_cast<float>(local.x * m[3] + local.y * m[4] + local.z * m[5]),
           static_cast<float>(local.x * m[6] + local.y * m[7] + local.z * m[8])};
 }
-
 std::array<Vector3, 2> NumberSpotLocals() {
   return {{{0.0f, 0.0f, 1.0f},
            {0.0f, 0.0f, -1.0f}}};
 }
-
 struct NumberSpot {
   Vector3 local{};
   Vector3 world{};
   float visibility = 0.0f;
 };
-
 float NumberSpotVisibility(float facing) {
   const float t = static_cast<float>(hb::Clamp((facing - 0.01f) / 0.58f, 0.0, 1.0));
   return t * t * (3.0f - 2.0f * t);
 }
-
 std::array<NumberSpot, 2> NumberSpotsForBall(const Ball &ball) {
   const auto spots = NumberSpotLocals();
   std::array<NumberSpot, 2> out{};
@@ -366,7 +435,6 @@ std::array<NumberSpot, 2> NumberSpotsForBall(const Ball &ball) {
   }
   return out;
 }
-
 Color ShadeBallPixel(Color base, Vector3 n, float edgeAlpha) {
   const Vector3 light = Vector3Normalize({-0.45f, -0.58f, 0.82f});
   const float diffuse = std::max(0.0f, Vector3DotProduct(n, light));
@@ -380,7 +448,6 @@ Color ShadeBallPixel(Color base, Vector3 n, float edgeAlpha) {
       static_cast<unsigned char>(hb::Clamp(edgeAlpha * 255.0f, 0.0, 255.0))};
   return out;
 }
-
 void DrawBall(Font font, const View &view, const Ball &ball) {
   if ((ball.pocketed || ball.sinking) && ball.pocketFade >= 1.0) {
     return;
@@ -395,7 +462,6 @@ void DrawBall(Font font, const View &view, const Ball &ball) {
   }
   DrawCircleV({c.x + r * 0.18f, c.y + r * 0.22f}, r * 1.02f,
               {0, 0, 0, static_cast<unsigned char>(115 * visualAlpha)});
-
   const bool stripe = hb::IsStripe(ball.number);
   const Color base = BallColor(ball.number);
   const Color ivory{246, 243, 226, 255};
@@ -453,7 +519,6 @@ void DrawBall(Font font, const View &view, const Ball &ball) {
               {255, 255, 255, static_cast<unsigned char>(110 * visualAlpha)});
   DrawCircleLines(static_cast<int>(c.x), static_cast<int>(c.y), r,
                   {25, 25, 25, static_cast<unsigned char>(150 * visualAlpha)});
-
   if (ball.number > 0) {
     char label[4]{};
     std::snprintf(label, sizeof(label), "%d", ball.number);
@@ -492,7 +557,6 @@ void DrawBall(Font font, const View &view, const Ball &ball) {
     }
   }
 }
-
 Vector2 BezierCubic(Vector2 a, Vector2 b, Vector2 c, Vector2 d, float t) {
   const float u = 1.0f - t;
   return {u * u * u * a.x + 3.0f * u * u * t * b.x +
@@ -500,7 +564,6 @@ Vector2 BezierCubic(Vector2 a, Vector2 b, Vector2 c, Vector2 d, float t) {
           u * u * u * a.y + 3.0f * u * u * t * b.y +
               3.0f * u * t * t * c.y + t * t * t * d.y};
 }
-
 void AppendBezier(std::vector<Vector2> &points, Vector2 a, Vector2 b,
                   Vector2 c, Vector2 d) {
   constexpr int segments = 14;
@@ -509,7 +572,6 @@ void AppendBezier(std::vector<Vector2> &points, Vector2 a, Vector2 b,
                                  static_cast<float>(i) / segments));
   }
 }
-
 void FillPolygonFan(const std::vector<Vector2> &points, Color color) {
   if (points.size() < 3) {
     return;
@@ -525,14 +587,12 @@ void FillPolygonFan(const std::vector<Vector2> &points, Color color) {
     DrawTriangle(center, points[i], points[(i + 1) % points.size()], color);
   }
 }
-
 void DrawPolyline(const std::vector<Vector2> &points, float thick,
                   Color color) {
   for (size_t i = 1; i < points.size(); ++i) {
     DrawLineEx(points[i - 1], points[i], thick, color);
   }
 }
-
 void DrawHorizontalCushion(float x1, float x2, float outerY, float depth,
                            bool top) {
   if (x2 <= x1 + depth * 2.0f) {
@@ -543,7 +603,6 @@ void DrawHorizontalCushion(float x1, float x2, float outerY, float depth,
   const float sy = top ? 1.0f : -1.0f;
   const Color rubber{26, 73, 59, 255};
   const Color nose{7, 31, 25, 205};
-
   std::vector<Vector2> body;
   body.push_back({x1, outerY});
   body.push_back({x2, outerY});
@@ -556,7 +615,6 @@ void DrawHorizontalCushion(float x1, float x2, float outerY, float depth,
                {x1 + jaw * 0.08f, outerY + sy * depth * 0.16f},
                {x1, outerY});
   FillPolygonFan(body, rubber);
-
   std::vector<Vector2> noseLine{{x1, outerY}};
   AppendBezier(noseLine, {x1, outerY},
                {x1 + jaw * 0.08f, outerY + sy * depth * 0.16f},
@@ -568,7 +626,6 @@ void DrawHorizontalCushion(float x1, float x2, float outerY, float depth,
                {x2, outerY});
   DrawPolyline(noseLine, 1.35f, nose);
 }
-
 void DrawVerticalCushion(float outerX, float y1, float y2, float depth,
                          bool left) {
   if (y2 <= y1 + depth * 2.0f) {
@@ -579,7 +636,6 @@ void DrawVerticalCushion(float outerX, float y1, float y2, float depth,
   const float sx = left ? 1.0f : -1.0f;
   const Color rubber{26, 73, 59, 255};
   const Color nose{7, 31, 25, 205};
-
   std::vector<Vector2> body;
   body.push_back({outerX, y1});
   body.push_back({outerX, y2});
@@ -592,7 +648,6 @@ void DrawVerticalCushion(float outerX, float y1, float y2, float depth,
                {outerX + sx * depth * 0.16f, y1 + jaw * 0.08f},
                {outerX, y1});
   FillPolygonFan(body, rubber);
-
   std::vector<Vector2> noseLine{{outerX, y1}};
   AppendBezier(noseLine, {outerX, y1},
                {outerX + sx * depth * 0.16f, y1 + jaw * 0.08f},
@@ -604,7 +659,6 @@ void DrawVerticalCushion(float outerX, float y1, float y2, float depth,
                {outerX, y2});
   DrawPolyline(noseLine, 1.35f, nose);
 }
-
 void DrawPocketShape(const View &view, int index, Vector2 p) {
   const bool side = index == 1 || index == 4;
   const double mouth = side ? hb::kSidePocketMouth : hb::kCornerPocketMouth;
@@ -612,12 +666,10 @@ void DrawPocketShape(const View &view, int index, Vector2 p) {
   const float r = std::max(14.0f * view.uiScale, mouthPx * (side ? 0.54f : 0.58f));
   const Color rim{42, 39, 32, 240};
   const Color innerRim{6, 8, 7, 255};
-
   DrawCircleV(p, r + 4.0f * view.uiScale, rim);
   DrawCircleV(p, r + 1.5f * view.uiScale, innerRim);
   DrawCircleV(p, r, BLACK);
 }
-
 void DrawPockets(const View &view) {
   const Vector2 pockets[6] = {
       WorldToScreen(view, {-hb::kTableWidth * 0.5, -hb::kTableHeight * 0.5}),
@@ -631,7 +683,6 @@ void DrawPockets(const View &view) {
     DrawPocketShape(view, i, pockets[i]);
   }
 }
-
 void DrawTable(const View &view) {
   const float frameW = 16.0f * view.uiScale;
   const float cushionD = static_cast<float>(hb::kCushionNoseInset * view.scale);
@@ -639,18 +690,15 @@ void DrawTable(const View &view) {
       static_cast<float>(hb::kSidePocketMouth * 0.74 * view.scale);
   const float cornerGap =
       static_cast<float>(hb::kCornerPocketMouth * 0.74 * view.scale);
-
   Rectangle rail{view.play.x - frameW, view.play.y - frameW,
                  view.play.width + frameW * 2, view.play.height + frameW * 2};
   DrawRectangleRounded(rail, 0.018f, 12, {17, 19, 18, 255});
   DrawRectangleRec(view.play, {31, 86, 72, 255});
-
   const float left = view.play.x;
   const float right = view.play.x + view.play.width;
   const float top = view.play.y;
   const float bottom = view.play.y + view.play.height;
   const float midX = view.play.x + view.play.width * 0.5f;
-
   DrawHorizontalCushion(left + cornerGap, midX - sideGap, top, cushionD,
                         true);
   DrawHorizontalCushion(midX + sideGap, right - cornerGap, top, cushionD,
@@ -664,43 +712,35 @@ void DrawTable(const View &view) {
   DrawVerticalCushion(right, top + cornerGap, bottom - cornerGap, cushionD,
                       false);
   DrawRectangleLinesEx(view.play, 1.0f, {9, 32, 26, 130});
-
   const float spotR = 3.0f;
   DrawCircleV(WorldToScreen(view, {hb::kHeadSpotX, 0.0}), spotR,
               {210, 220, 205, 85});
   DrawCircleV(WorldToScreen(view, {hb::kFootSpotX, 0.0}), spotR,
               {210, 220, 205, 85});
 }
-
 void DrawDetailedCue(Vector2 cueBall, Vector2 aimDir, float ballR,
                      float power, const View &view);
 void DrawTaperedRect(Vector2 a, Vector2 b, float wA, float wB, Color color);
-
 void DrawCueShadow(const Game &game, const View &view) {
   if (game.phase != Phase::Aiming || game.world.CueBall().pocketed ||
       game.world.CueBall().sinking) return;
-
   const Vector2 cue = WorldToScreen(view, game.world.CueBall().pos);
   const Vector2 dir{static_cast<float>(game.aim.x), static_cast<float>(game.aim.y)};
   const Vector2 forward = Vector2Normalize(dir);
   if (forward.x == 0.0f && forward.y == 0.0f) return;
-
   const float s = static_cast<float>(view.scale);
   const float us = view.uiScale;
   const float cueLen = std::min(s * 1.30f, 1700.0f);
   const float pullback = (10.0f + static_cast<float>(game.power) * 118.0f) * us;
   const float ballR = static_cast<float>(hb::kBallRadius * view.scale);
   const float gap = ballR + 5.0f * us + pullback;
-
   const float tipX = cue.x - forward.x * gap;
   const float tipY = cue.y - forward.y * gap;
   const float buttX = tipX - forward.x * cueLen;
   const float buttY = tipY - forward.y * cueLen;
-
   const float tipW = std::max(0.005f * s, 2.5f * us);
   const float buttW = std::max(0.016f * s, 7.5f * us);
   const float jt = 0.35f;
-
   auto P = [&](float t) -> Vector2 {
     return Vector2{buttX + (tipX - buttX) * t, buttY + (tipY - buttY) * t};
   };
@@ -709,21 +749,17 @@ void DrawCueShadow(const Game &game, const View &view) {
     if (t <= 0.96f) return buttW + (tipW - buttW) * ((t - jt) / (0.96f - jt));
     return tipW;
   };
-
   const float sx = 4.5f * us;
   const float sy = 5.0f * us;
-
   // Shadow butt: cylinder section
   DrawLineEx({P(0.0f).x + sx, P(0.0f).y + sy},
              {P(jt).x + sx, P(jt).y + sy},
              buttW * 1.05f, {0, 0, 0, 72});
-
   // Shadow shaft: from joint to tip
   const Vector2 sTip = {P(1.0f).x + sx, P(1.0f).y + sy};
   DrawTaperedRect({P(jt).x + sx, P(jt).y + sy}, sTip,
                   W(jt) * 1.05f, tipW * 0.8f, {0, 0, 0, 72});
 }
-
 void DrawCueAndAim(const Game &game, const View &view) {
   if (game.phase != Phase::Aiming || game.world.CueBall().pocketed ||
       game.world.CueBall().sinking) {
@@ -748,7 +784,6 @@ void DrawCueAndAim(const Game &game, const View &view) {
                     {236, 241, 228, 205});
   }
 }
-
 Rectangle Button(Font font, Rectangle r, const char *text, bool active) {
   DrawRoundedFillWithBorder(
       r, 0.12f, 8, active ? Color{57, 79, 72, 255} : Color{27, 30, 31, 255},
@@ -759,14 +794,13 @@ Rectangle Button(Font font, Rectangle r, const char *text, bool active) {
             {222, 224, 215, 255});
   return r;
 }
-
 void DrawTopStatus(Game &game) {
   const float s = static_cast<float>(
       hb::Clamp(std::min(GetScreenWidth() / 1360.0, GetScreenHeight() / 820.0),
                 0.72, 1.55));
   const auto &rs = game.rules.State();
   char line[192]{};
-  std::snprintf(line, sizeof(line), "目前击球：%d号玩家    击打：%s",
+  std::snprintf(line, sizeof(line), "目前玩家%d击球    目标%s",
                 rs.currentPlayer + 1,
                 hb::GroupName(rs.players[rs.currentPlayer].group));
   const float fs = 26.0f * s;
@@ -777,30 +811,24 @@ void DrawTopStatus(Game &game) {
              {pos.x + sz.x, pos.y + sz.y + 3.0f * s},
              1.0f, {93, 112, 101, 130});
 }
-
 float UiScale() {
   return static_cast<float>(
       hb::Clamp(std::min(GetScreenWidth() / 1360.0, GetScreenHeight() / 820.0),
                 0.72, 1.55));
 }
-
 Rectangle ControlPanelRect(float s) {
   return {static_cast<float>(GetScreenWidth()) - 258.0f * s, 46.0f * s,
           224.0f * s, 390.0f * s};
 }
-
 Vector2 TipControlCenter(Rectangle panel, float s) {
   return {panel.x + 112.0f * s, panel.y + 146.0f * s};
 }
-
 Rectangle HelpButtonRect() {
   return {188.0f, 0.0f, 72.0f, 34.0f};
 }
-
 Rectangle HelpWindowRect(float s) {
   return {108.0f * s, 54.0f * s, 520.0f * s, 314.0f * s};
 }
-
 void DrawTaperedRect(Vector2 a, Vector2 b, float wA, float wB, Color color) {
   const float dx = b.x - a.x, dy = b.y - a.y;
   const float len = sqrtf(dx * dx + dy * dy);
@@ -819,30 +847,24 @@ void DrawTaperedRect(Vector2 a, Vector2 b, float wA, float wB, Color color) {
                      {sl * 0.5f + 0.25f, w * 0.5f}, angle, color);
   }
 }
-
 void DrawDetailedCue(Vector2 cueBall, Vector2 aimDir, float ballR,
                      float power, const View &view) {
   const Vector2 forward = Vector2Normalize(aimDir);
   if (forward.x == 0.0f && forward.y == 0.0f) return;
-
   BeginBlendMode(BLEND_ALPHA);
   EndBlendMode();
-
   const float s = static_cast<float>(view.scale);
   const float us = view.uiScale;
   const float cueLen = std::min(s * 1.30f, 1700.0f);
   const float pullback = (10.0f + power * 118.0f) * us;
   const float gap = ballR + 5.0f * us + pullback;
-
   const float tipX = cueBall.x - forward.x * gap;
   const float tipY = cueBall.y - forward.y * gap;
   const float buttX = tipX - forward.x * cueLen;
   const float buttY = tipY - forward.y * cueLen;
-
   const float tipW = std::max(0.005f * s, 2.5f * us);
   const float buttW = std::max(0.016f * s, 7.5f * us);
   const float jt = 0.35f;
-
   const auto P = [&](float t) -> Vector2 {
     return {buttX + (tipX - buttX) * t, buttY + (tipY - buttY) * t};
   };
@@ -851,16 +873,12 @@ void DrawDetailedCue(Vector2 cueBall, Vector2 aimDir, float ballR,
     if (t <= 0.96f) return buttW + (tipW - buttW) * ((t - jt) / (0.96f - jt));
     return tipW;
   };
-
   DrawLineEx(P(0.0f), P(jt), buttW, {92, 48, 18, 255});
   DrawTaperedRect(P(jt), P(0.96f), W(jt), W(0.96f), {195, 165, 110, 255});
-
   DrawLineEx(P(0.0f), P(0.025f), W(0.0f) + 1.0f * us, {16, 14, 12, 255});
   DrawLineEx(P(0.023f), P(0.036f), W(0.023f) + 1.5f * us, {180, 148, 95, 255});
-
   DrawTaperedRect(P(jt), P(jt + 0.015f), W(jt) + 1.5f * us, W(jt + 0.015f) + 1.5f * us, {156, 163, 171, 255});
   DrawLineEx(P(jt - 0.008f), P(jt), W(jt - 0.008f) + 1.0f * us, {195, 190, 180, 255});
-
   auto drawRing = [&](float t1, float t2, float extra, Color color) {
     DrawTaperedRect(P(t1), P(t2), W(t1) + extra * us, W(t2) + extra * us, color);
   };
@@ -868,24 +886,18 @@ void DrawDetailedCue(Vector2 cueBall, Vector2 aimDir, float ballR,
   drawRing(0.086f, 0.094f, 0.6f, {200, 195, 185, 255});
   drawRing(0.11f, 0.122f, 1.5f, {140, 145, 152, 255});
   drawRing(0.126f, 0.134f, 0.6f, {200, 195, 185, 255});
-
   drawRing(0.14f, 0.33f, 0.0f, {18, 20, 22, 255});
   drawRing(0.14f, 0.148f, 1.2f, {160, 152, 140, 255});
   drawRing(0.322f, 0.33f, 1.2f, {160, 152, 140, 255});
-
   DrawTaperedRect(P(0.96f), P(0.984f), W(0.96f) + 0.3f * us, W(0.984f), {230, 228, 222, 255});
   DrawTaperedRect(P(0.984f), P(1.0f), W(0.984f) * 0.85f, tipW * 0.5f, {28, 52, 82, 255});
-
   const Vector2 perp{-forward.y, forward.x};
-
   DrawLineEx({P(0.01f).x + perp.x * W(0.01f) * 0.36f, P(0.01f).y + perp.y * W(0.01f) * 0.36f},
              {P(0.96f).x + perp.x * tipW * 0.28f, P(0.96f).y + perp.y * tipW * 0.28f},
              1.0f * us, {255, 255, 255, 85});
-
   DrawLineEx({P(0.01f).x - perp.x * W(0.01f) * 0.40f, P(0.01f).y - perp.y * W(0.01f) * 0.40f},
              {P(0.96f).x - perp.x * tipW * 0.36f, P(0.96f).y - perp.y * tipW * 0.36f},
              0.9f * us, {0, 0, 0, 32});
-
   for (int g = -1; g <= 1; g += 2) {
     const float midW = (tipW + buttW) * 0.5f;
     const float gOff = g * midW * 0.16f;
@@ -894,17 +906,14 @@ void DrawDetailedCue(Vector2 cueBall, Vector2 aimDir, float ballR,
                0.8f * us, {130, 100, 45, 45});
   }
 }
-
 void DrawUI(Game &game) {
   const float s = UiScale();
   Rectangle panel = ControlPanelRect(s);
   DrawRoundedFillWithBorder(panel, 0.045f, 12, {12, 13, 14, 232},
                             {50, 58, 55, 190});
-
   const auto &rs = game.rules.State();
-  DrawTextF(game.font, "击球控制", {panel.x + 18 * s, panel.y + 17 * s}, 27 * s,
+  DrawTextF(game.font, "击球设置", {panel.x + 18 * s, panel.y + 17 * s}, 27 * s,
             {236, 238, 228, 255});
-
   DrawTextF(game.font, "击点", {panel.x + 18 * s, panel.y + 61 * s}, 22 * s,
             {205, 212, 204, 255});
   const Vector2 center = TipControlCenter(panel, s);
@@ -926,14 +935,12 @@ void DrawUI(Game &game) {
             {177, 186, 178, 255});
   DrawTextF(game.font, "右", {center.x + padR + 10 * s, center.y - 10 * s}, 18 * s,
             {177, 186, 178, 255});
-  DrawTextF(game.font, "高", {center.x - 9 * s, center.y - padR - 29 * s}, 18 * s,
+  DrawTextF(game.font, "上", {center.x - 9 * s, center.y - padR - 29 * s}, 18 * s,
             {177, 186, 178, 255});
-  DrawTextF(game.font, "低", {center.x - 9 * s, center.y + padR + 13 * s}, 18 * s,
+  DrawTextF(game.font, "下", {center.x - 9 * s, center.y + padR + 13 * s}, 18 * s,
             {177, 186, 178, 255});
-
   Button(game.font, {panel.x + 18 * s, panel.y + 238 * s, 188 * s, 30 * s},
          "还原", true);
-
   char powerText[64]{};
   std::snprintf(powerText, sizeof(powerText), "力度 %3d%%", static_cast<int>(game.power * 100.0));
   DrawTextF(game.font, powerText, {panel.x + 18 * s, panel.y + 292 * s}, 22 * s,
@@ -941,16 +948,14 @@ void DrawUI(Game &game) {
   DrawRectangleRounded({panel.x + 18 * s, panel.y + 322 * s, 188 * s, 12 * s}, 0.4f, 8, {28, 31, 31, 255});
   DrawRectangleRounded({panel.x + 18 * s, panel.y + 322 * s, static_cast<float>(188.0 * game.power * s), 12 * s},
                        0.4f, 8, {143, 170, 151, 255});
-
   Button(game.font, {panel.x + 18 * s, panel.y + 354 * s, 188 * s, 30 * s},
          "重新摆球", true);
-
   Rectangle msg{48.0f * s, static_cast<float>(GetScreenHeight()) - 58.0f * s,
                 static_cast<float>(GetScreenWidth()) - 96.0f * s, 34.0f * s};
   DrawRectangleRounded(msg, 0.08f, 8, {9, 10, 10, 210});
   DrawTextF(game.font, rs.message.c_str(), {msg.x + 14 * s, msg.y + 6 * s}, 22 * s, {221, 224, 216, 255});
-
   if (game.phase == Phase::GroupChoice) {
+    DrawBackdrop();
     Rectangle modal{static_cast<float>(GetScreenWidth()) * 0.5f - 170.0f,
                     static_cast<float>(GetScreenHeight()) * 0.5f - 62.0f, 340.0f, 124.0f};
     DrawRoundedFillWithBorder(modal, 0.04f, 12, {13, 15, 15, 245},
@@ -960,7 +965,6 @@ void DrawUI(Game &game) {
     Button(game.font, {modal.x + 180, modal.y + 69, 126, 34}, "半色球", true);
   }
 }
-
 Rectangle TitleButton(Rectangle r, const char *label, Font font, bool hot) {
   DrawRectangleRec(r, hot ? Color{30, 33, 33, 255} : Color{0, 0, 0, 0});
   const float fs = 22.0f;
@@ -971,7 +975,6 @@ Rectangle TitleButton(Rectangle r, const char *label, Font font, bool hot) {
             {198, 204, 197, 235});
   return r;
 }
-
 void DrawTitleTextItem(Font font, Rectangle r, const char *label, float fs,
                        Color color, bool hot) {
   DrawRectangleRec(r, hot ? Color{20, 22, 22, 255} : Color{0, 0, 0, 0});
@@ -980,14 +983,12 @@ void DrawTitleTextItem(Font font, Rectangle r, const char *label, float fs,
                           r.y + (r.height - sz.y) * 0.5f - 1.0f},
             fs, color);
 }
-
 enum class WindowButtonKind {
   Minimize,
   Maximize,
   Restore,
   Close
 };
-
 void DrawWindowButton(Rectangle r, WindowButtonKind kind, bool hot) {
   DrawRectangleRec(r, hot ? Color{30, 33, 33, 255} : Color{0, 0, 0, 0});
   const Color c = kind == WindowButtonKind::Close && hot
@@ -1016,11 +1017,203 @@ void DrawWindowButton(Rectangle r, WindowButtonKind kind, bool hot) {
                {center.x - s * 0.65f, center.y + s * 0.65f}, 1.5f, c);
   }
 }
-
+  // Lobby / Room / Chat UI
+void DrawTitleBar(Game &game);
+void DrawDetailedCue(Vector2 cueBall, Vector2 aimDir, float ballR,
+                     float power, const View &view);
+void DrawChatWindow(Game &game) {
+  const float sh = static_cast<float>(GetScreenHeight());
+  const float us = UiScale();
+  const float cw = 280.0f * us;
+  const float ch = 150.0f * us;
+  const float cx = 12.0f * us;
+  const float cy = sh - ch - 12.0f * us;
+  DrawRectangleRounded({cx - 2, cy - 2, cw + 4, ch + 4}, 0.04f, 8, {8, 9, 10, 200});
+  DrawRectangleRounded({cx, cy, cw, ch}, 0.04f, 8, {15, 17, 18, 220});
+  int visible = game.chatInputActive ? 5 : 7;
+  int start = std::max(0, static_cast<int>(game.chatHistory.size()) - visible);
+  float y = cy + 8.0f * us;
+  for (int i = start; i < static_cast<int>(game.chatHistory.size()); ++i) {
+    DrawTextF(game.font, game.chatHistory[i].c_str(), {cx + 8.0f * us, y},
+              14.0f * us, {210, 215, 205, 255});
+    y += 18.0f * us;
+  }
+  if (game.chatInputActive) {
+    DrawRectangleRounded({cx + 4, cy + ch - 28.0f * us, cw - 8, 24.0f * us},
+                         0.12f, 6, {25, 27, 28, 230});
+    std::string display = game.chatInputBuf.substr(0, game.chatInputCursor);
+    if (static_cast<int>(GetTime() * 2.0) % 2) display += "|";
+    display += game.chatInputBuf.substr(game.chatInputCursor);
+    DrawTextF(game.font, display.c_str(), {cx + 10.0f * us, cy + ch - 26.0f * us},
+              15.0f * us, {238, 240, 232, 255});
+  } else {
+    DrawTextF(game.font, "Enter 输入房间名", {cx + 8.0f * us, cy + ch - 22.0f * us},
+              13.0f * us, {120, 128, 122, 200});
+  }
+}
+void DrawCreateRoomDialog(Game &game) {
+  const float sw = static_cast<float>(GetScreenWidth());
+  const float sh = static_cast<float>(GetScreenHeight());
+  const float us = UiScale();
+  const Vector2 mouse = GetMousePosition();
+  float cw = 360.0f * us, ch = 280.0f * us, cx = sw * 0.5f - cw * 0.5f, cy = sh * 0.5f - ch * 0.5f;
+  DrawRectangleRounded({cx, cy, cw, ch}, 0.05f, 12, {12, 14, 14, 245});
+  DrawRectangleRoundedLines({cx, cy, cw, ch}, 0.05f, 12, {70, 82, 76, 210});
+  DrawTextF(game.font, "创建房间", {cx + 16, cy + 14}, 24 * us, {236, 238, 228, 255});
+  DrawTextF(game.font, "房间名", {cx + 16, cy + 58}, 18 * us, {180, 190, 178, 255});
+  Rectangle nameBox{cx + 16, cy + 80, cw - 32, 28};
+  Color nameBoxColor = game.createDlgFocus == 0 ? Color{35, 39, 36, 240} : Color{25, 27, 28, 220};
+  DrawRectangleRounded(nameBox, 0.08f, 6, nameBoxColor);
+  if (game.createDlgFocus == 0) {
+    DrawRectangleRoundedLines(nameBox, 0.08f, 6, {110, 140, 125, 180});
+  }
+  std::string nameDisp = game.createRoomName.substr(0, game.createNameCursor);
+  if (game.createDlgFocus == 0 && (static_cast<int>(GetTime() * 2.5) % 2)) nameDisp += "|";
+  nameDisp += game.createRoomName.substr(game.createNameCursor);
+  DrawTextF(game.font, nameDisp.c_str(), {cx + 22, cy + 84}, 18 * us, {236, 240, 230, 255});
+  DrawTextF(game.font, "密码 (可选)", {cx + 16, cy + 120}, 18 * us, {180, 190, 178, 255});
+  Rectangle pwdBox{cx + 16, cy + 142, cw - 32, 28};
+  Color pwdBoxColor = game.createDlgFocus == 1 ? Color{35, 39, 36, 240} : Color{25, 27, 28, 220};
+  DrawRectangleRounded(pwdBox, 0.08f, 6, pwdBoxColor);
+  if (game.createDlgFocus == 1) {
+    DrawRectangleRoundedLines(pwdBox, 0.08f, 6, {110, 140, 125, 180});
+  }
+  std::string pwdDisp = std::string(game.createRoomPwd.size(), '*');
+  std::string pwdCursor = game.createRoomPwd.substr(0, game.createPwdCursor);
+  std::string pwdPost = game.createRoomPwd.substr(game.createPwdCursor);
+  int starPre = static_cast<int>(pwdCursor.size());
+  int starPost = static_cast<int>(pwdPost.size());
+  pwdDisp = std::string(starPre, '*');
+  if (game.createDlgFocus == 1 && (static_cast<int>(GetTime() * 2.5) % 2)) pwdDisp += "|";
+  pwdDisp += std::string(starPost, '*');
+  DrawTextF(game.font, pwdDisp.c_str(), {cx + 22, cy + 146}, 18 * us, {236, 240, 230, 255});
+  DrawTextF(game.font, "玩家一/玩家二", {cx + 16, cy + 182}, 18 * us, {180, 190, 178, 255});
+  Rectangle p1R{cx + 16, cy + 204, 80, 24};
+  Rectangle p2R{cx + 106, cy + 204, 80, 24};
+  Color p1Col = game.createHostIsP1 ? Color{57, 79, 72, 255} : Color{25, 27, 28, 220};
+  Color p2Col = game.createHostIsP1 ? Color{25, 27, 28, 220} : Color{57, 79, 72, 255};
+  if (CheckCollisionPointRec(mouse, p1R)) { p1Col.r = std::min(255, p1Col.r + 15); p1Col.g = std::min(255, p1Col.g + 15); p1Col.b = std::min(255, p1Col.b + 10); }
+  if (CheckCollisionPointRec(mouse, p2R)) { p2Col.r = std::min(255, p2Col.r + 15); p2Col.g = std::min(255, p2Col.g + 15); p2Col.b = std::min(255, p2Col.b + 10); }
+  DrawRectangleRounded(p1R, 0.12f, 6, p1Col);
+  DrawTextF(game.font, "玩家1", {cx + 28, cy + 207}, 16 * us, {236, 240, 230, 255});
+  DrawRectangleRounded(p2R, 0.12f, 6, p2Col);
+  DrawTextF(game.font, "玩家2", {cx + 118, cy + 207}, 16 * us, {236, 240, 230, 255});
+  Rectangle okR{cx + cw * 0.5f - 70, cy + ch - 44, 64, 28};
+  Rectangle cancelR{cx + cw * 0.5f + 10, cy + ch - 44, 64, 28};
+  bool okH = CheckCollisionPointRec(mouse, okR), cancelH = CheckCollisionPointRec(mouse, cancelR);
+  DrawRectangleRounded(okR, 0.12f, 6, okH ? Color{77, 99, 88, 255} : Color{57, 79, 72, 255});
+  DrawTextF(game.font, "确定", {okR.x + 10, okR.y + 5}, 16 * us, {236, 240, 230, 255});
+  DrawRectangleRounded(cancelR, 0.12f, 6, cancelH ? Color{35, 39, 38, 240} : Color{25, 27, 28, 220});
+  DrawTextF(game.font, "取消", {cancelR.x + 10, cancelR.y + 5}, 16 * us, {200, 205, 198, 255});
+}
+void DrawLobby(Game &game) {
+  const float sw = static_cast<float>(GetScreenWidth());
+  const float sh = static_cast<float>(GetScreenHeight());
+  const float us = UiScale();
+  const Vector2 mouse = GetMousePosition();
+  ClearBackground(BLACK);
+  DrawTitleBar(game);
+  DrawTextF(game.font, "局域网联机", {40, 50}, 32 * us, {236, 238, 228, 255});
+  DrawTextF(game.font, "LAN 房间列表", {40, 90}, 18 * us, {150, 160, 148, 220});
+  float y = 130;
+  game.roomList = game.client.GetRooms();
+  for (size_t i = 0; i < game.roomList.size(); ++i) {
+    auto &r = game.roomList[i];
+    Rectangle row{40, y, sw - 80, 44};
+    bool hover = CheckCollisionPointRec(mouse, row);
+    DrawRectangleRounded(row, 0.05f, 8, hover ? Color{28, 32, 30, 230} : Color{18, 20, 20, 200});
+    char info[256];
+    std::snprintf(info, sizeof(info), "%s  %s  %d/2  %s",
+                  r.name.c_str(), r.hasPassword ? "[密码]" : "",
+                  r.playerCount, r.hostIP.c_str());
+    DrawTextF(game.font, info, {row.x + 14, row.y + 12}, 16 * us, {210, 218, 206, 255});
+    Rectangle joinBtn{row.x + row.width - 70, row.y + 8, 56, 28};
+    bool jHover = CheckCollisionPointRec(mouse, joinBtn);
+    DrawRectangleRounded(joinBtn, 0.12f, 6, jHover ? Color{77, 99, 88, 255} : Color{57, 79, 72, 255});
+    DrawTextF(game.font, "加入", {joinBtn.x + 10, joinBtn.y + 5}, 15 * us, {236, 240, 230, 255});
+    y += 52;
+  }
+  if (game.roomList.empty()) {
+    DrawTextF(game.font, "(没有房间列表, 点击创建)", {50, y}, 16 * us, {120, 128, 122, 180});
+  }
+  Rectangle createBtn{sw - 160, sh - 60, 130, 34};
+  bool cHover = CheckCollisionPointRec(mouse, createBtn);
+  DrawRectangleRounded(createBtn, 0.12f, 8, cHover ? Color{77, 99, 88, 255} : Color{57, 79, 72, 255});
+  DrawTextF(game.font, "创建房间", {createBtn.x + 18, createBtn.y + 6}, 18 * us, {236, 240, 230, 255});
+  Rectangle refreshBtn{sw - 310, sh - 60, 130, 34};
+  bool rHover = CheckCollisionPointRec(mouse, refreshBtn);
+  DrawRectangleRounded(refreshBtn, 0.12f, 8, rHover ? Color{35, 39, 38, 240} : Color{25, 27, 28, 220});
+  DrawTextF(game.font, "刷新", {refreshBtn.x + 30, refreshBtn.y + 6}, 18 * us, {200, 205, 198, 255});
+}
+void DrawRoomWait(Game &game) {
+  const float sw = static_cast<float>(GetScreenWidth());
+  const float sh = static_cast<float>(GetScreenHeight());
+  const float us = UiScale();
+  const Vector2 mouse = GetMousePosition();
+  ClearBackground(BLACK);
+  DrawTitleBar(game);
+  DrawTextF(game.font, game.roomName.c_str(), {40, 50}, 28 * us, {236, 238, 228, 255});
+  std::string status = game.amReady ? "已就绪" : "未就绪";
+  DrawTextF(game.font, ("我的状态: " + status).c_str(), {40, 100}, 18 * us, {180, 190, 180, 255});
+  std::string opStatus;
+  if (game.appMode == AppMode::RoomHost) {
+    opStatus = game.host.HasClient() ? (game.opReady ? "对手已就绪" : "对手未就绪") : "等待对手加入...";
+  } else {
+    if (!game.client.IsAccepted() && game.client.IsConnecting())
+      opStatus = "连接中...";
+    else if (!game.client.IsAccepted())
+      opStatus = "连接失败";
+    else
+      opStatus = game.opReady ? "对手已就绪" : "对手未就绪";
+  }
+  DrawTextF(game.font, opStatus.c_str(), {40, 130}, 18 * us, {180, 190, 180, 255});
+  // Pulse animation for ready status
+  float pulse = 0.5f + 0.5f * sinf(static_cast<float>(GetTime()) * 3.0f);
+  if (!game.opReady && game.appMode == AppMode::RoomHost) {
+    DrawTextF(game.font, "等待玩家...", {sw * 0.5f - 60, sh * 0.5f}, 16 * us,
+              {static_cast<unsigned char>(160 + 60 * pulse),
+               static_cast<unsigned char>(170 + 60 * pulse),
+               static_cast<unsigned char>(160 + 60 * pulse), 255});
+  }
+  // Only show ready button when connected (client) or always (host)
+  bool showReadyBtn = (game.appMode == AppMode::RoomHost) || game.client.IsAccepted();
+  if (showReadyBtn) {
+    Rectangle readyBtn{sw * 0.5f - 60, sh - 120, 120, 34};
+    bool rHover = CheckCollisionPointRec(mouse, readyBtn);
+    Color rCol = game.amReady ? Color{80, 100, 90, 255} : Color{57, 79, 72, 255};
+    if (rHover) { rCol.r = static_cast<unsigned char>(std::min(255, rCol.r + 20)); rCol.g = static_cast<unsigned char>(std::min(255, rCol.g + 20)); rCol.b = static_cast<unsigned char>(std::min(255, rCol.b + 15)); }
+    DrawRectangleRounded(readyBtn, 0.12f, 8, rCol);
+    DrawTextF(game.font, game.amReady ? "取消就绪" : "就绪",
+              {readyBtn.x + 22, readyBtn.y + 6}, 18 * us, {236, 240, 230, 255});
+  }
+  DrawChatWindow(game);
+}
+void DrawJoinPasswordDialog(Game &game) {
+  const float sw = static_cast<float>(GetScreenWidth());
+  const float sh = static_cast<float>(GetScreenHeight());
+  float cw = 280.0f, ch = 140.0f, cx = sw * 0.5f - cw * 0.5f, cy = sh * 0.5f - ch * 0.5f;
+  DrawRectangleRounded({cx, cy, cw, ch}, 0.05f, 12, {12, 14, 14, 245});
+  DrawTextF(game.font, "输入房间密码", {cx + 16, cy + 14}, 20, {236, 238, 228, 255});
+  DrawRectangleRounded({cx + 16, cy + 44, cw - 32, 28}, 0.08f, 6, {25, 27, 28, 220});
+  std::string pwdDisp = std::string(game.joinPwdInput.size(), '*');
+  int starPre = game.joinPwdCursor;
+  int starPost = static_cast<int>(game.joinPwdInput.size()) - game.joinPwdCursor;
+  pwdDisp = std::string(starPre, '*');
+  if (static_cast<int>(GetTime() * 2.5) % 2) pwdDisp += "|";
+  pwdDisp += std::string(starPost, '*');
+  DrawTextF(game.font, pwdDisp.c_str(), {cx + 22, cy + 48}, 18, {236, 240, 230, 255});
+  Rectangle okR{cx + cw * 0.5f - 70, cy + ch - 34, 64, 24};
+  Rectangle cancelR{cx + cw * 0.5f + 6, cy + ch - 34, 64, 24};
+  DrawRectangleRounded(okR, 0.12f, 6, {57, 79, 72, 255});
+  DrawTextF(game.font, "确定", {okR.x + 14, okR.y + 3}, 15, {236, 240, 230, 255});
+  DrawRectangleRounded(cancelR, 0.12f, 6, {25, 27, 28, 220});
+  DrawTextF(game.font, "取消", {cancelR.x + 14, cancelR.y + 3}, 15, {200, 205, 198, 255});
+}
 void DrawTitleBar(Game &game) {
   const float w = static_cast<float>(GetScreenWidth());
   const Vector2 mouse = GetMousePosition();
   const Rectangle helpR = HelpButtonRect();
+  const Rectangle netR{262.0f, 0.0f, 66.0f, 34.0f};
   const Rectangle titleR{12.0f, 0.0f, 84.0f, 34.0f};
   const Rectangle modeR{98.0f, 0.0f, 86.0f, 34.0f};
   const Rectangle minR{w - 129.0f, 0.0f, 42.0f, 34.0f};
@@ -1029,13 +1222,21 @@ void DrawTitleBar(Game &game) {
   Rectangle bar{0.0f, 0.0f, w, 34.0f};
   DrawRectangleRec(bar, BLACK);
   DrawRectangle(0, 33, GetScreenWidth(), 1, {50, 57, 55, 120});
-  DrawTitleTextItem(game.font, titleR, "中式八球", 19.0f,
+  DrawTitleTextItem(game.font, titleR, "中式台球", 19.0f,
                     {218, 224, 216, 255}, false);
-  DrawTitleTextItem(game.font, modeR, "双人对战", 17.0f,
+  const char *modeLabel = "双人对战";
+  if (game.appMode == AppMode::Lobby) modeLabel = "局域网联机";
+  else if (game.appMode == AppMode::RoomHost || game.appMode == AppMode::RoomClient)
+    modeLabel = "房间对战";
+  else if (game.appMode == AppMode::PlayingOnline) modeLabel = "在线对战中";
+  DrawTitleTextItem(game.font, modeR, modeLabel, 17.0f,
                     {142, 154, 147, 230}, false);
   DrawTitleTextItem(game.font, helpR, "帮助", 18.0f,
                     {198, 204, 197, 235},
                     game.helpOpen || PointInRect(mouse, helpR));
+  const char *netLabel = (game.appMode == AppMode::Single) ? "单机" : "联机";
+  DrawTitleTextItem(game.font, netR, netLabel, 17.0f,
+                    {155, 190, 170, 235}, PointInRect(mouse, netR));
   DrawWindowButton(minR, WindowButtonKind::Minimize, PointInRect(mouse, minR));
   DrawWindowButton(maxR,
                    IsWindowMaximized() ? WindowButtonKind::Restore
@@ -1043,13 +1244,11 @@ void DrawTitleBar(Game &game) {
                    PointInRect(mouse, maxR));
   DrawWindowButton(closeR, WindowButtonKind::Close, PointInRect(mouse, closeR));
 }
-
 void DrawFpsCounter(Font font) {
   char text[32]{};
   std::snprintf(text, sizeof(text), "FPS %d", GetFPS());
   DrawTextF(font, text, {18.0f, 38.0f}, 18.0f, {180, 192, 184, 235});
 }
-
 void DrawHelpWindow(Game &game) {
   if (!game.helpOpen) {
     return;
@@ -1058,21 +1257,19 @@ void DrawHelpWindow(Game &game) {
   const Rectangle panel = HelpWindowRect(s);
   DrawRoundedFillWithBorder(panel, 0.035f, 12, {11, 13, 13, 246},
                             {72, 84, 78, 230});
-
   DrawTextF(game.font, "帮助", {panel.x + 18.0f * s, panel.y + 14.0f * s},
             26.0f * s, {238, 241, 231, 255});
   const Rectangle closeR{panel.x + panel.width - 42.0f * s,
                          panel.y + 10.0f * s, 26.0f * s, 26.0f * s};
-  TitleButton(closeR, "×", game.font, PointInRect(GetMousePosition(), closeR));
-
+  TitleButton(closeR, "关", game.font, PointInRect(GetMousePosition(), closeR));
   const char *lines[] = {
-      "规则：中式八球，两名玩家轮流击球。",
-      "先合法打完自己的全色球或半色球，再打进8号球获胜。",
-      "犯规后对手获得自由球；开局或未定组时按规则自动判定。",
-      "操作：移动鼠标瞄准，滚轮下滑蓄力，滚轮上滑出杆。",
-      "右侧击点盘调整高低杆和左右塞；还原按钮回到中杆。",
-      "自由球时移动鼠标选择白球位置，左键确认放置。",
-      "Esc 清空力度，C 还原击点，空格开始下一局。"};
+      "本游戏为中式台球（黑八）规则。",
+      "先合法击入己方全色球或半色球再击入8号球者获胜。",
+      "白球必须先击中己方球；否则犯规由对手自动判断。",
+      "瞄准移动鼠标控制方向，右键蓄力、左键击球或滚轮击球。",
+      "右侧面板可调整击点高低杆、左右塞，还原按钮回到中杆。",
+      "自由球时移动鼠标选择放置位置，然后确认击打。",
+      "Esc 暂停菜单，C 还原，空格开始下一局。"};
   float y = panel.y + 56.0f * s;
   for (const char *line : lines) {
     DrawTextF(game.font, line, {panel.x + 20.0f * s, y}, 18.0f * s,
@@ -1080,7 +1277,6 @@ void DrawHelpWindow(Game &game) {
     y += 32.0f * s;
   }
 }
-
 bool HandleTitleBarInput(Game &game) {
   const Vector2 mouse = GetMousePosition();
   const float w = static_cast<float>(GetScreenWidth());
@@ -1093,7 +1289,6 @@ bool HandleTitleBarInput(Game &game) {
   if (mouse.x >= w - edge) hit |= ResizeRight;
   if (mouse.y <= edge) hit |= ResizeTop;
   if (mouse.y >= h - edge) hit |= ResizeBottom;
-
   if (game.resizeMode == ResizeNone && !game.draggingTitle) {
     if ((hit & (ResizeLeft | ResizeRight)) && (hit & (ResizeTop | ResizeBottom))) {
       SetMouseCursor((hit == (ResizeLeft | ResizeTop)) || (hit == (ResizeRight | ResizeBottom))
@@ -1107,17 +1302,16 @@ bool HandleTitleBarInput(Game &game) {
       SetMouseCursor(MOUSE_CURSOR_DEFAULT);
     }
   }
-
   const Rectangle helpR = HelpButtonRect();
+  const Rectangle netR{262.0f, 0.0f, 66.0f, 34.0f};
   const Rectangle minR{w - 129.0f, 0.0f, 42.0f, 34.0f};
   const Rectangle maxR{w - 86.0f, 0.0f, 42.0f, 34.0f};
   const Rectangle closeR{w - 43.0f, 0.0f, 42.0f, 34.0f};
   const Rectangle dragR{0.0f, 0.0f, w - 131.0f, 34.0f};
-
   if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
     if (hit != ResizeNone && !PointInRect(mouse, minR) &&
         !PointInRect(mouse, maxR) && !PointInRect(mouse, closeR) &&
-        !PointInRect(mouse, helpR)) {
+        !PointInRect(mouse, helpR) && !PointInRect(mouse, netR)) {
       game.resizeMode = hit;
       return true;
     }
@@ -1139,6 +1333,24 @@ bool HandleTitleBarInput(Game &game) {
     }
     if (PointInRect(mouse, helpR)) {
       game.helpOpen = !game.helpOpen;
+      return true;
+    }
+    if (PointInRect(mouse, netR)) {
+      if (game.appMode == AppMode::Single) {
+        game.appMode = AppMode::Lobby;
+        game.roomList.clear();
+        game.showCreateDlg = false;
+        game.client.Stop();
+        game.host.Stop();
+        game.client.Start();
+      } else {
+        game.client.Stop();
+        game.host.Stop();
+        game.appMode = AppMode::Single;
+        game.phase = Phase::Aiming;
+        game.world.ResetRack();
+        game.rules.ResetRack(0);
+      }
       return true;
     }
     if (PointInRect(mouse, dragR)) {
@@ -1188,14 +1400,12 @@ bool HandleTitleBarInput(Game &game) {
   }
   return PointInRect(mouse, {0.0f, 0.0f, w, 34.0f});
 }
-
 bool HandleUiInput(Game &game) {
   const float s = UiScale();
   const Vector2 mouse = GetMousePosition();
   Rectangle panel = ControlPanelRect(s);
   const Vector2 tipCenter = TipControlCenter(panel, s);
   const float tipR = 50.0f * s;
-
   if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
     if (game.helpOpen) {
       const Rectangle help = HelpWindowRect(s);
@@ -1240,9 +1450,517 @@ bool HandleUiInput(Game &game) {
   }
   return false;
 }
-
 void UpdateGame(Game &game, const View &view) {
-  if (IsKeyPressed(KEY_ESCAPE)) {
+  // Title bar always works
+  if (HandleTitleBarInput(game)) return;
+  // Chat input handling
+  if (IsKeyPressed(KEY_ENTER)) {
+    if (!game.chatInputActive) {
+      game.chatInputActive = true;
+      game.chatInputBuf.clear();
+    } else if (!game.chatInputBuf.empty()) {
+      if (game.appMode == AppMode::PlayingOnline) {
+        std::string prefix = game.host.HasClient() ? "对手: " : "我: ";
+        if (game.host.HasClient()) game.host.SendChat(game.chatInputBuf);
+        else game.client.SendChat(game.chatInputBuf);
+        game.chatHistory.push_back(prefix + game.chatInputBuf);
+      } else if (game.appMode == AppMode::RoomHost) {
+        game.host.SendChat(game.chatInputBuf);
+        game.chatHistory.push_back("我: " + game.chatInputBuf);
+      } else if (game.appMode == AppMode::RoomClient) {
+        game.client.SendChat(game.chatInputBuf);
+        game.chatHistory.push_back("我: " + game.chatInputBuf);
+      }
+      game.chatInputBuf.clear();
+      game.chatInputActive = false;
+    }
+  }
+  if (game.chatInputActive) {
+    if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+      float sh = static_cast<float>(GetScreenHeight());
+      float us = UiScale();
+      float cw = 280.0f * us;
+      float ch = 150.0f * us;
+      float cx = 12.0f * us;
+      float cy = sh - ch - 12.0f * us;
+      Rectangle inputBox{cx + 4, cy + ch - 28.0f * us, cw - 8, 24.0f * us};
+      Vector2 m = GetMousePosition();
+      if (CheckCollisionPointRec(m, inputBox)) {
+        game.chatInputCursor = TextCursorFromMouseX(game.font, game.chatInputBuf, m.x, cx + 10.0f * us, 15.0f * us);
+      }
+    }
+    int key = GetCharPressed();
+    while (key > 0) {
+      if (key >= 32 && key <= 0x9FFF && static_cast<int>(game.chatInputBuf.size()) < 120)
+        TextInsertAt(game.chatInputBuf, game.chatInputCursor, key);
+      key = GetCharPressed();
+    }
+    if (IsKeyPressed(KEY_LEFT))
+      game.chatInputCursor = Utf8PrevPos(game.chatInputBuf, game.chatInputCursor);
+    if (IsKeyPressed(KEY_RIGHT))
+      game.chatInputCursor = Utf8NextPos(game.chatInputBuf, game.chatInputCursor);
+    if (IsKeyPressed(KEY_HOME))
+      game.chatInputCursor = 0;
+    if (IsKeyPressed(KEY_END))
+      game.chatInputCursor = static_cast<int>(game.chatInputBuf.size());
+    if (IsKeyPressed(KEY_DELETE) && game.chatInputCursor < static_cast<int>(game.chatInputBuf.size()))
+      TextEraseAfter(game.chatInputBuf, game.chatInputCursor);
+    bool ctrl = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
+    if (ctrl && IsKeyPressed(KEY_A))
+      game.chatInputCursor = static_cast<int>(game.chatInputBuf.size());
+    double now = GetTime();
+    if (IsKeyDown(KEY_BACKSPACE) && game.chatInputCursor > 0) {
+      game.repeatKey.begin(KEY_BACKSPACE, now);
+      if (game.repeatKey.fired) {
+        game.repeatKey.fired = false;
+        TextEraseBefore(game.chatInputBuf, game.chatInputCursor);
+      }
+      if (game.repeatKey.poll(now))
+        TextEraseBefore(game.chatInputBuf, game.chatInputCursor);
+    } else {
+      game.repeatKey.end(KEY_BACKSPACE);
+    }
+    if (IsKeyPressed(KEY_ESCAPE)) {
+      game.chatInputActive = false;
+      game.chatInputBuf.clear();
+      game.chatInputCursor = 0;
+    }
+  } else {
+    game.repeatKey.end(KEY_BACKSPACE);
+  }
+  // Mode-specific updates
+  if (game.appMode == AppMode::Lobby) {
+    if (HandleTitleBarInput(game)) return;
+    game.client.Poll();
+    if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+      Vector2 mouse = GetMousePosition();
+      float sw = static_cast<float>(GetScreenWidth()), sh = static_cast<float>(GetScreenHeight());
+      Rectangle createBtn{sw - 160, sh - 60, 130, 34};
+      Rectangle refreshBtn{sw - 310, sh - 60, 130, 34};
+      if (CheckCollisionPointRec(mouse, createBtn)) {
+        game.showCreateDlg = true;
+        game.createDlgFocus = 0;
+        game.createRoomName = "我的房间";
+        game.createRoomPwd.clear();
+        game.createHostIsP1 = true;
+      } else if (CheckCollisionPointRec(mouse, refreshBtn)) {
+        game.roomList.clear();
+      } else if (game.showCreateDlg) {
+        float cw = 360.0f, ch = 280.0f, cx = sw * 0.5f - cw * 0.5f, cy = sh * 0.5f - ch * 0.5f;
+        Rectangle okR{cx + cw * 0.5f - 70, cy + ch - 44, 64, 28};
+        Rectangle cancelR{cx + cw * 0.5f + 10, cy + ch - 44, 64, 28};
+        Rectangle p1R{cx + 16, cy + 204, 80, 24};
+        Rectangle p2R{cx + 106, cy + 204, 80, 24};
+        if (CheckCollisionPointRec(mouse, okR)) {
+          game.roomName = game.createRoomName;
+          game.roomPassword = game.createRoomPwd;
+          game.hostIsPlayer1 = game.createHostIsP1;
+          game.client.Stop();
+          if (game.host.Start(game.roomName, game.roomPassword, game.hostIsPlayer1)) {
+            game.appMode = AppMode::RoomHost;
+            game.amReady = false;
+            game.opReady = false;
+            game.chatHistory.clear();
+          }
+          game.showCreateDlg = false;
+        } else if (CheckCollisionPointRec(mouse, cancelR)) {
+          game.showCreateDlg = false;
+        } else if (CheckCollisionPointRec(mouse, p1R)) {
+          game.createHostIsP1 = true;
+        } else if (CheckCollisionPointRec(mouse, p2R)) {
+          game.createHostIsP1 = false;
+        }
+      } else {
+        float y = 130;
+        game.roomList = game.client.GetRooms();
+        for (size_t i = 0; i < game.roomList.size(); ++i) {
+          Rectangle row{40, y, sw - 80, 44};
+          Rectangle joinBtn{row.x + row.width - 70, row.y + 8, 56, 28};
+          if (CheckCollisionPointRec(mouse, joinBtn)) {
+            if (game.roomList[i].hasPassword) {
+              game.joinPwdInput.clear();
+              game.showCreateDlg = true;  // reuse as join pwd dialog, flag handled below
+              game.roomName = game.roomList[i].name;
+              game.roomPassword = game.roomList[i].hostIP; // stash IP here
+              game.roomList.clear(); // will re-poll
+            } else {
+              game.client.Stop(); game.client.Start();
+              if (game.client.Connect(game.roomList[i].hostIP, "")) {
+                game.appMode = AppMode::RoomClient;
+                game.roomName = game.roomList[i].name;
+                game.amReady = false;
+                game.opReady = false;
+                game.chatHistory.clear();
+              }
+            }
+            break;
+          }
+          y += 52;
+        }
+      }
+    }
+    // Handle create dialog text input
+    if (game.showCreateDlg) {
+      // Mouse click to switch focus between room name and password fields
+      if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+        Vector2 m = GetMousePosition();
+        float scw = static_cast<float>(GetScreenWidth());
+        float sch = static_cast<float>(GetScreenHeight());
+        float cw3 = 360.0f, ch3 = 280.0f, cx3 = scw * 0.5f - cw3 * 0.5f,
+              cy3 = sch * 0.5f - ch3 * 0.5f;
+        Rectangle nameBox2{cx3 + 16, cy3 + 80, cw3 - 32, 28};
+        Rectangle pwdBox2{cx3 + 16, cy3 + 142, cw3 - 32, 28};
+        if (CheckCollisionPointRec(m, nameBox2)) {
+          game.createDlgFocus = 0;
+          game.createNameCursor = TextCursorFromMouseX(game.font, game.createRoomName, m.x, cx3 + 22, 18.0f);
+        } else if (CheckCollisionPointRec(m, pwdBox2)) {
+          game.createDlgFocus = 1;
+          std::string display = std::string(game.createRoomPwd.size(), '*');
+          game.createPwdCursor = TextCursorFromMouseX(game.font, display, m.x, cx3 + 22, 18.0f);
+        }
+      }
+      int key = GetCharPressed();
+      while (key > 0) {
+        if (game.createDlgFocus == 0 && key >= 32 && key <= 126 &&
+            static_cast<int>(game.createRoomName.size()) < 30) {
+          TextInsertAt(game.createRoomName, game.createNameCursor, key);
+        } else if (game.createDlgFocus == 1 && key >= 32 && key <= 126 &&
+                   static_cast<int>(game.createRoomPwd.size()) < 20) {
+          TextInsertAt(game.createRoomPwd, game.createPwdCursor, key);
+        }
+        key = GetCharPressed();
+      }
+      int &cursor = game.createDlgFocus == 0 ? game.createNameCursor : game.createPwdCursor;
+      std::string &text = game.createDlgFocus == 0 ? game.createRoomName : game.createRoomPwd;
+      if (IsKeyPressed(KEY_LEFT)) cursor = Utf8PrevPos(text, cursor);
+      if (IsKeyPressed(KEY_RIGHT)) cursor = Utf8NextPos(text, cursor);
+      if (IsKeyPressed(KEY_HOME)) cursor = 0;
+      if (IsKeyPressed(KEY_END)) cursor = static_cast<int>(text.size());
+      if (IsKeyPressed(KEY_DELETE) && cursor < static_cast<int>(text.size()))
+        TextEraseAfter(text, cursor);
+      bool ctrl = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
+      if (ctrl && IsKeyPressed(KEY_A)) cursor = static_cast<int>(text.size());
+      double now = GetTime();
+      if (IsKeyDown(KEY_BACKSPACE) && cursor > 0) {
+        game.repeatKey.begin(KEY_BACKSPACE, now);
+        if (game.repeatKey.fired) { game.repeatKey.fired = false; TextEraseBefore(text, cursor); }
+        if (game.repeatKey.poll(now)) TextEraseBefore(text, cursor);
+      } else {
+        game.repeatKey.end(KEY_BACKSPACE);
+      }
+      // Tab to switch focus
+      if (IsKeyPressed(KEY_TAB)) {
+        game.createDlgFocus = 1 - game.createDlgFocus;
+      }
+    }
+    // Handle join password dialog (also shown in lobby)
+    if (!game.roomPassword.empty() && game.showCreateDlg && game.appMode == AppMode::Lobby) {
+      // This is actually the join password dialog
+      float sw2 = static_cast<float>(GetScreenWidth()), sh2 = static_cast<float>(GetScreenHeight());
+      float cw2 = 280.0f, ch2 = 140.0f, cx2 = sw2 * 0.5f - cw2 * 0.5f, cy2 = sh2 * 0.5f - ch2 * 0.5f;
+      Rectangle okR2{cx2 + cw2 * 0.5f - 70, cy2 + ch2 - 34, 64, 24};
+      Rectangle cancelR2{cx2 + cw2 * 0.5f + 6, cy2 + ch2 - 34, 64, 24};
+      Vector2 mouse = GetMousePosition();
+      if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+        if (CheckCollisionPointRec(mouse, okR2)) {
+          game.client.Stop(); game.client.Start();
+          if (game.client.Connect(game.roomPassword, game.joinPwdInput)) {
+            game.appMode = AppMode::RoomClient;
+            game.amReady = false;
+            game.opReady = false;
+            game.chatHistory.clear();
+          }
+          game.showCreateDlg = false;
+          game.roomPassword.clear();
+        } else if (CheckCollisionPointRec(mouse, cancelR2)) {
+          game.showCreateDlg = false;
+          game.roomPassword.clear();
+        } else {
+          Rectangle pwdBox3{cx2 + 16, cy2 + 44, cw2 - 32, 28};
+          if (CheckCollisionPointRec(mouse, pwdBox3)) {
+            std::string display = std::string(game.joinPwdInput.size(), '*');
+            game.joinPwdCursor = TextCursorFromMouseX(game.font, display, mouse.x, cx2 + 22, 18.0f);
+          }
+        }
+      }
+      int key2 = GetCharPressed();
+      while (key2 > 0) {
+        if (key2 >= 32 && key2 <= 126 && static_cast<int>(game.joinPwdInput.size()) < 20)
+          TextInsertAt(game.joinPwdInput, game.joinPwdCursor, key2);
+        key2 = GetCharPressed();
+      }
+      if (IsKeyPressed(KEY_LEFT))
+        game.joinPwdCursor = Utf8PrevPos(game.joinPwdInput, game.joinPwdCursor);
+      if (IsKeyPressed(KEY_RIGHT))
+        game.joinPwdCursor = Utf8NextPos(game.joinPwdInput, game.joinPwdCursor);
+      if (IsKeyPressed(KEY_HOME)) game.joinPwdCursor = 0;
+      if (IsKeyPressed(KEY_END))
+        game.joinPwdCursor = static_cast<int>(game.joinPwdInput.size());
+      if (IsKeyPressed(KEY_DELETE) && game.joinPwdCursor < static_cast<int>(game.joinPwdInput.size()))
+        TextEraseAfter(game.joinPwdInput, game.joinPwdCursor);
+      bool ctrl2 = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
+      if (ctrl2 && IsKeyPressed(KEY_A))
+        game.joinPwdCursor = static_cast<int>(game.joinPwdInput.size());
+      double now2 = GetTime();
+      if (IsKeyDown(KEY_BACKSPACE) && game.joinPwdCursor > 0) {
+        game.repeatKey.begin(KEY_BACKSPACE, now2);
+        if (game.repeatKey.fired) { game.repeatKey.fired = false; TextEraseBefore(game.joinPwdInput, game.joinPwdCursor); }
+        if (game.repeatKey.poll(now2)) TextEraseBefore(game.joinPwdInput, game.joinPwdCursor);
+      } else {
+        game.repeatKey.end(KEY_BACKSPACE);
+      }
+    }
+    return;
+  }
+  if (game.appMode == AppMode::RoomHost) {
+    game.host.Poll();
+    // Handle client ready/unready
+    if (game.host.HasReady()) { game.opReady = true; }
+    if (game.host.HasUnready()) { game.opReady = false; }
+    if (game.host.HasChat(nullptr)) {
+      std::string msg; game.host.HasChat(&msg);
+      game.chatHistory.push_back("我: " + msg);
+    }
+    if (game.host.HasBye() || game.host.ClientDisconnected()) {
+      game.opReady = false;
+      game.amReady = false;
+      game.chatHistory.clear();
+    }
+    if (game.host.HasAim(nullptr, nullptr, nullptr)) {
+      game.host.HasAim(&game.opAimTipX, &game.opAimTipY, &game.opPower);
+    }
+    if (game.amReady && game.opReady) {
+      int clientPlayer = game.hostIsPlayer1 ? 1 : 0;
+      game.host.SendAssign(clientPlayer);
+      game.world.ResetRack();
+      game.rules.ResetRack(game.hostIsPlayer1 ? 0 : 1);
+      game.phase = Phase::Aiming;
+      game.onlineTurn = 0;
+      if (!game.hostIsPlayer1) game.onlineTurn = 1;
+      game.appMode = AppMode::PlayingOnline;
+      game.host.SendTurn(game.rules.State().currentPlayer);
+      game.host.SendPositions(game.world.Balls());
+      game.syncedBalls = game.world.Balls();
+    }
+    // Ready button
+    if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+      Vector2 mouse = GetMousePosition();
+      float sw = static_cast<float>(GetScreenWidth()), sh = static_cast<float>(GetScreenHeight());
+      Rectangle readyBtn{sw * 0.5f - 60, sh - 120, 120, 34};
+      if (CheckCollisionPointRec(mouse, readyBtn)) {
+        game.amReady = !game.amReady;
+        if (game.amReady) game.host.SendReady();
+        else game.host.SendUnready();
+      }
+    }
+    return;
+  }
+  if (game.appMode == AppMode::RoomClient) {
+    game.client.Poll();
+    if (game.client.HasAssign(nullptr)) {
+      game.client.HasAssign(&game.assignedPlayer);
+    }
+    if (game.client.HasTurn(nullptr)) {
+      int turn;
+      game.client.HasTurn(&turn);
+      game.rules.State().currentPlayer = turn;
+    }
+    if (game.client.HasPositions(nullptr)) {
+      game.client.HasPositions(&game.syncedBalls);
+    }
+    if (game.client.HasReadyAck()) { game.opReady = true; }
+    if (game.client.HasUnreadyAck()) { game.opReady = false; }
+    if (game.client.HasChat(nullptr)) {
+      std::string msg; game.client.HasChat(&msg);
+      game.chatHistory.push_back("对手: " + msg);
+    }
+    if (game.client.HasBye() || game.client.Disconnected()) {
+      game.opReady = false;
+      game.amReady = false;
+      game.assignedPlayer = -1;
+      game.chatHistory.clear();
+    }
+    // Auto-return to lobby if connection was rejected or failed
+    if (!game.client.IsAccepted() && !game.client.IsConnecting()) {
+      game.client.Stop(); game.client.Start();
+      game.appMode = AppMode::Lobby;
+      game.showCreateDlg = false;
+      game.roomPassword.clear();
+      game.assignedPlayer = -1;
+      return;
+    }
+    if (game.client.HasAim(nullptr, nullptr, nullptr)) {
+      game.client.HasAim(&game.opAimTipX, &game.opAimTipY, &game.opPower);
+    }
+    if (game.amReady && game.opReady && game.client.IsAccepted() && game.assignedPlayer >= 0) {
+      game.onlineTurn = game.assignedPlayer;
+      game.world.ResetRack();
+      // Apply synced positions to world
+      if (game.syncedBalls[0].pos.x != 0.0 || game.syncedBalls[0].pos.y != 0.0) {
+        for (int i = 0; i < 16; ++i) {
+          game.world.Balls()[i].pos = game.syncedBalls[i].pos;
+        }
+      }
+      game.phase = Phase::Aiming;
+      game.appMode = AppMode::PlayingOnline;
+    }
+    if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && game.client.IsAccepted()) {
+      Vector2 mouse = GetMousePosition();
+      float sw = static_cast<float>(GetScreenWidth()), sh = static_cast<float>(GetScreenHeight());
+      Rectangle readyBtn{sw * 0.5f - 60, sh - 120, 120, 34};
+      if (CheckCollisionPointRec(mouse, readyBtn)) {
+        game.amReady = !game.amReady;
+        if (game.amReady) game.client.SendReady();
+        else game.client.SendUnready();
+      }
+    }
+    return;
+  }
+  // Playing Online
+  if (game.appMode == AppMode::PlayingOnline) {
+    if (HandleTitleBarInput(game)) return;
+    bool amHost = game.host.HasClient();
+    if (amHost) game.host.Poll(); else game.client.Poll();
+    // Handle opponent bye/disconnect
+    if (amHost) {
+      if (game.host.HasBye() || game.host.ClientDisconnected()) {
+        game.appMode = AppMode::RoomHost; game.amReady = false; game.opReady = false; game.chatHistory.clear(); return;
+      }
+      if (game.host.HasChat(nullptr)) { std::string m; game.host.HasChat(&m); game.chatHistory.push_back("我: " + m); }
+      if (game.host.HasAim(nullptr, nullptr, nullptr)) { game.host.HasAim(&game.opAimTipX, &game.opAimTipY, &game.opPower); }
+    } else {
+      if (game.client.HasBye() || game.client.Disconnected()) {
+        game.appMode = AppMode::RoomClient; game.amReady = false; game.opReady = false; game.assignedPlayer = -1; game.chatHistory.clear(); return;
+      }
+      if (game.client.HasChat(nullptr)) { std::string m; game.client.HasChat(&m); game.chatHistory.push_back("对手: " + m); }
+      if (game.client.HasAim(nullptr, nullptr, nullptr)) { game.client.HasAim(&game.opAimTipX, &game.opAimTipY, &game.opPower); }
+    }
+    bool isMyTurn = (game.rules.State().currentPlayer == game.onlineTurn);
+    bool isOpponentTurn = !isMyTurn;
+    const float dt = GetFrameTime();
+    double now = GetTime();
+    if (isMyTurn && game.phase == Phase::Aiming && !game.world.CueBall().pocketed &&
+        !game.world.CueBall().sinking) {
+      const Vec2 mouseWorld = ScreenToWorld(view, GetMousePosition());
+      game.aim = hb::Normalize(mouseWorld - game.world.CueBall().pos);
+      const float wheel = GetMouseWheelMove();
+      if (wheel < 0.0f) {
+        game.power = hb::Clamp(game.power + (-wheel) * 0.055, 0.0, 1.0);
+      } else if (wheel > 0.0f && game.power > 0.015) {
+        ShotParams shot{game.aim, game.power, game.tipX, game.tipY};
+        game.shotEvents.Clear();
+        game.world.StrikeCue(shot);
+        game.phase = Phase::Moving;
+        game.power = 0.0;
+        if (amHost) {
+          // host will compute physics and send positions
+        } else {
+          game.client.SendShot(game.tipX, game.tipY, shot.power, game.aim.x, game.aim.y);
+        }
+      }
+      // Send aim updates
+      if (now - game.lastAimSend > 0.067) {
+        game.lastAimSend = now;
+        if (amHost) game.host.SendAim(game.tipX, game.tipY, game.power);
+        else game.client.SendAim(game.tipX, game.tipY, game.power);
+        // also send aim direction? For simplicity, just tipX/tipY/power
+      }
+    } else if (isMyTurn && game.phase == Phase::BallInHand) {
+      Vec2 pos = ClampCuePlacement(ScreenToWorld(view, GetMousePosition()));
+      if (game.world.CanPlaceCue(pos)) {
+        game.world.PlaceCue(pos);
+        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+          game.rules.State().ballInHand = false;
+          game.phase = Phase::Aiming;
+        }
+      }
+    } else if (isMyTurn && game.phase == Phase::Moving) {
+      game.world.Step(dt, &game.shotEvents);
+      if (!game.world.IsMoving()) {
+        auto decision = game.rules.ApplyShot(game.shotEvents, game.world);
+        game.phase = decision.nextPhase;
+        int cp = game.rules.State().currentPlayer;
+        if (amHost) {
+          game.host.SendTurn(cp);
+          game.host.SendPositions(game.world.Balls());
+          game.syncedBalls = game.world.Balls();
+        }
+        if (game.phase == Phase::BallInHand) {
+          game.world.PlaceCue({hb::kHeadSpotX, 0.0});
+        }
+      }
+    } else if (isMyTurn && game.phase == Phase::RackOver && !game.chatInputActive && IsKeyPressed(KEY_SPACE)) {
+      int nb = game.rules.State().winner >= 0 ? game.rules.State().winner : 0;
+      game.world.ResetRack();
+      game.rules.ResetRack(nb);
+      game.phase = Phase::Aiming;
+    }
+    // Host: compute physics for opponent's shot if received
+    if (amHost && isOpponentTurn && game.phase == Phase::Aiming) {
+      if (game.host.HasShot(nullptr)) {
+        ShotParams opShot;
+        game.host.HasShot(&opShot);
+        game.shotEvents.Clear();
+        game.world.StrikeCue(opShot);
+        game.phase = Phase::Moving;
+      }
+    }
+    // Also handle opponent's Moving phase on host
+    if (amHost && isOpponentTurn && game.phase == Phase::Moving) {
+      game.world.Step(dt, &game.shotEvents);
+      if (!game.world.IsMoving()) {
+        auto decision = game.rules.ApplyShot(game.shotEvents, game.world);
+        game.phase = decision.nextPhase;
+        int cp = game.rules.State().currentPlayer;
+        game.host.SendTurn(cp);
+        game.host.SendPositions(game.world.Balls());
+        game.syncedBalls = game.world.Balls();
+        if (game.phase == Phase::BallInHand) {
+          game.world.PlaceCue({hb::kHeadSpotX, 0.0});
+        }
+      }
+    }
+    // Client: apply received shot
+    if (!amHost && isOpponentTurn && game.phase == Phase::Aiming) {
+      if (game.client.HasShot(nullptr)) {
+        ShotParams opShot;
+        game.client.HasShot(&opShot);
+        game.shotEvents.Clear();
+        game.world.StrikeCue(opShot);
+        game.phase = Phase::Moving;
+      }
+    }
+    // Host: send positions during moving phase
+    if (amHost && game.phase == Phase::Moving) {
+      if (now - game.lastPosSend > 1.0 / 30.0) {
+        game.lastPosSend = now;
+        game.host.SendPositions(game.world.Balls());
+        game.syncedBalls = game.world.Balls();
+      }
+    }
+    // Client: receive and render positions
+    if (!amHost) {
+      if (game.client.HasPositions(nullptr)) {
+        game.client.HasPositions(&game.syncedBalls);
+      }
+      // Override world ball positions with synced data when not actively computing physics
+      if (!isMyTurn || game.phase != Phase::Moving) {
+        for (int i = 0; i < 16; ++i) {
+          game.world.Balls()[i].pos = game.syncedBalls[i].pos;
+        }
+      }
+    }
+    // Handle turn messages for client
+    if (!amHost && game.client.HasTurn(nullptr)) {
+      int turn;
+      game.client.HasTurn(&turn);
+      game.rules.State().currentPlayer = turn;
+    }
+    if (!game.chatInputActive && IsKeyPressed(KEY_C)) { game.tipX = 0.0; game.tipY = 0.0; }
+    return;
+  }
+  // Single-player (original)
+  if (!game.chatInputActive && IsKeyPressed(KEY_ESCAPE)) {
     if (game.power > 0.0) {
       game.power = 0.0;
       return;
@@ -1253,7 +1971,6 @@ void UpdateGame(Game &game, const View &view) {
   }
   const bool uiHandled = HandleUiInput(game);
   const float dt = GetFrameTime();
-
   if (!uiHandled && game.phase == Phase::Aiming && !game.world.CueBall().pocketed &&
       !game.world.CueBall().sinking) {
     const Vec2 mouseWorld = ScreenToWorld(view, GetMousePosition());
@@ -1286,20 +2003,35 @@ void UpdateGame(Game &game, const View &view) {
         game.world.PlaceCue({hb::kHeadSpotX, 0.0});
       }
     }
-  } else if (game.phase == Phase::RackOver && IsKeyPressed(KEY_SPACE)) {
+  } else if (game.phase == Phase::RackOver && !game.chatInputActive && IsKeyPressed(KEY_SPACE)) {
     const int nextBreaker = game.rules.State().winner >= 0 ? game.rules.State().winner : 0;
     game.world.ResetRack();
     game.rules.ResetRack(nextBreaker);
     game.phase = Phase::Aiming;
   }
-
-  if (IsKeyPressed(KEY_C)) {
+  if (!game.chatInputActive && IsKeyPressed(KEY_C)) {
     game.tipX = 0.0;
     game.tipY = 0.0;
   }
 }
-
 void DrawGame(Game &game, const View &view) {
+  if (game.appMode == AppMode::Lobby) {
+    DrawLobby(game);
+    if (game.showCreateDlg) {
+      DrawBackdrop();
+      // Check if this is a create dialog or join password dialog
+      if (!game.roomPassword.empty() && game.appMode == AppMode::Lobby) {
+        DrawJoinPasswordDialog(game);
+      } else {
+        DrawCreateRoomDialog(game);
+      }
+    }
+    return;
+  }
+  if (game.appMode == AppMode::RoomHost || game.appMode == AppMode::RoomClient) {
+    DrawRoomWait(game);
+    return;
+  }
   ClearBackground(BLACK);
   DrawTitleBar(game);
   DrawTopStatus(game);
@@ -1318,6 +2050,14 @@ void DrawGame(Game &game, const View &view) {
   }
   DrawCueAndAim(game, view);
   DrawCueShadow(game, view);
+  if (game.appMode == AppMode::PlayingOnline) {
+    bool isMyTurn = (game.rules.State().currentPlayer == game.onlineTurn);
+    if (!isMyTurn && game.phase == Phase::Aiming) {
+      const Vector2 oc = WorldToScreen(view, game.world.CueBall().pos);
+      DrawDetailedCue(oc, {0.0f, 0.0f}, static_cast<float>(hb::kBallRadius * view.scale), 0.0f, view);
+    }
+    DrawChatWindow(game);
+  }
   if (game.phase == Phase::BallInHand) {
     const Vector2 p = WorldToScreen(view, game.world.CueBall().pos);
     DrawCircleLines(static_cast<int>(p.x), static_cast<int>(p.y),
@@ -1325,22 +2065,21 @@ void DrawGame(Game &game, const View &view) {
                     {236, 238, 228, 150});
   }
   DrawUI(game);
+  if (game.helpOpen) DrawBackdrop();
   DrawHelpWindow(game);
-
   if (game.phase == Phase::RackOver) {
+    DrawBackdrop();
     Rectangle r{static_cast<float>(GetScreenWidth()) * 0.5f - 190.0f,
                 static_cast<float>(GetScreenHeight()) * 0.5f - 45.0f, 380.0f, 90.0f};
     DrawRoundedFillWithBorder(r, 0.05f, 12, {11, 12, 12, 240},
                               {70, 82, 76, 210});
     DrawTextF(game.font, game.rules.State().message.c_str(), {r.x + 35, r.y + 15}, 28,
               {236, 238, 228, 255});
-    DrawTextF(game.font, "按空格键开始下一局", {r.x + 63, r.y + 52}, 22,
+    DrawTextF(game.font, "按空格开始新一局", {r.x + 63, r.y + 52}, 22,
               {180, 190, 182, 255});
   }
 }
-
 } // namespace
-
 void EnableDebugConsoleIfRequested(int argc, char **argv) {
 #ifdef _WIN32
   for (int i = 1; i < argc; ++i) {
@@ -1359,18 +2098,16 @@ void EnableDebugConsoleIfRequested(int argc, char **argv) {
   (void)argv;
 #endif
 }
-
 int main(int argc, char **argv) {
   EnableDebugConsoleIfRequested(argc, argv);
   SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_UNDECORATED);
-  InitWindow(1360, 820, "中式八球");
+  InitWindow(1360, 820, "\xe4\xb8\xad\xe5\xbc\x8f\xe5\x8f\xb0\xe7\x90\x83");
   SetExitKey(KEY_NULL);
   SetWindowMinSize(960, 600);
   SetTargetFPS(240);
-
   Game game;
   std::vector<int> codepoints = BuildFontCodepoints();
-  game.font = LoadPingFangFont(codepoints);
+  game.font = LoadGameFont(codepoints);
   game.customFont = game.font.texture.id != 0;
   if (game.customFont) {
     ConfigureFontTexture(game.font);
@@ -1378,7 +2115,6 @@ int main(int argc, char **argv) {
   if (!game.customFont) {
     game.font = GetFontDefault();
   }
-
   while (!WindowShouldClose() && !game.requestClose) {
     const View view = MakeView(GetScreenWidth(), GetScreenHeight());
     UpdateGame(game, view);
@@ -1386,7 +2122,6 @@ int main(int argc, char **argv) {
     DrawGame(game, view);
     EndDrawing();
   }
-
   if (game.customFont) {
     UnloadFont(game.font);
   }

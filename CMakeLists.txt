@@ -27,22 +27,15 @@ set(UCRT64_RULE_LAUNCHER "${CMAKE_CURRENT_SOURCE_DIR}/tools/ucrt64-env.cmd")
 set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE "${UCRT64_RULE_LAUNCHER}")
 set_property(GLOBAL PROPERTY RULE_LAUNCH_LINK "${UCRT64_RULE_LAUNCHER}")
 
-file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
-configure_file(
-  src/resources.rc.in
-  "${CMAKE_CURRENT_BINARY_DIR}/generated/resources.rc"
-  @ONLY
-)
-
 add_library(heyball_core
   src/core.cpp
 )
 target_include_directories(heyball_core PUBLIC src)
-target_compile_options(heyball_core PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_options(heyball_core PRIVATE -Wall -Wextra -Wpedantic -finput-charset=UTF-8 -fexec-charset=UTF-8)
 
 add_executable(heyball
   src/main.cpp
-  "${CMAKE_CURRENT_BINARY_DIR}/generated/resources.rc"
+  src/network.cpp
 )
 if(WIN32)
   set_target_properties(heyball PROPERTIES WIN32_EXECUTABLE TRUE)
@@ -56,8 +49,9 @@ target_link_libraries(heyball PRIVATE
   -lwinmm
   -lopengl32
   -lkernel32
+  -lws2_32
 )
-target_compile_options(heyball PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_options(heyball PRIVATE -Wall -Wextra -Wpedantic -finput-charset=UTF-8 -fexec-charset=UTF-8)
 target_link_options(heyball PRIVATE
   -mwindows
   -static
@@ -66,6 +60,9 @@ add_custom_command(TARGET heyball POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "${MSYS2_UCRT64}/bin/glfw3.dll"
     "$<TARGET_FILE_DIR:heyball>/glfw3.dll"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "${CMAKE_SOURCE_DIR}/assets/PingFangSC.otf"
+    "$<TARGET_FILE_DIR:heyball>/PingFangSC.otf"
 )
 
 add_executable(heyball_tests
@@ -75,5 +72,15 @@ target_link_libraries(heyball_tests PRIVATE heyball_core)
 target_compile_options(heyball_tests PRIVATE -Wall -Wextra -Wpedantic)
 target_link_options(heyball_tests PRIVATE -static-libgcc -static-libstdc++)
 
+add_executable(heyball_network_tests
+  tests/test_network.cpp
+  src/network.cpp
+)
+target_include_directories(heyball_network_tests PRIVATE src tests)
+target_link_libraries(heyball_network_tests PRIVATE heyball_core -lws2_32)
+target_compile_options(heyball_network_tests PRIVATE -Wall -Wextra -Wpedantic -DHEYBALL_TEST_BUILD)
+target_link_options(heyball_network_tests PRIVATE -static-libgcc -static-libstdc++)
+
 enable_testing()
 add_test(NAME heyball_tests COMMAND heyball_tests)
+add_test(NAME heyball_network_tests COMMAND heyball_network_tests)

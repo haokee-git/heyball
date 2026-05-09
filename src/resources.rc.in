@@ -1,3 +1,2 @@
-#include "@CMAKE_CURRENT_SOURCE_DIR@/src/resource.h"
-
-IDR_PINGFANG_SC RCDATA "C:/Windows/Fonts/PingFangSC.otf"
+#define IDR_MSYH 101
+IDR_MSYH RCDATA "@CMAKE_SOURCE_DIR@/assets/msyh_regular.ttf"
