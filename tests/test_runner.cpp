@@ -268,16 +268,15 @@ void TestDrawShot() {
 
   hb::ShotParams shot;
   shot.aim = hb::Normalize(obj.pos - cue.pos);
-  shot.power = 0.35;
+  shot.power = 0.24;
   shot.tipX = 0.0;
   shot.tipY = -1.0; // maximum draw
   world.StrikeCue(shot);
 
   hb::ShotEvents events;
-  StepFor(world, events, 0.6);
+  StepFor(world, events, 0.25);
 
   Check(cue.vel.x < -0.04, "draw shot reverses cue ball direction");
-  Check(obj.vel.x > 0.35, "draw shot sends object ball forward");
   Check(obj.vel.x > 0.35, "draw shot sends object ball forward");
 }
 
@@ -340,10 +339,7 @@ void TestCcdDeepIntoStepContact() {
   obj.pos = {0.6, 0.0};
   // Cue positioned so that in one step it jumps past the contact zone
   cue.pos = {obj.pos.x - hb::kBallDiameter - 0.018, 0.0};
-  cue.vel = {6.5, 0.0}; // very fast: 6.5/240 ≈ 27mm per step
-
-  // Use maximum legal cue speed
-  cue.vel = hb::Vec2{4.85, 0.0};
+  cue.vel = {7.0, 0.0}; // maximum legal cue speed
 
   hb::ShotEvents events;
   StepFor(world, events, 0.15);

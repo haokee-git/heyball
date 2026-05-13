@@ -36,7 +36,7 @@ public:
   void SendTurn(int player);
   void SendPositions(const std::array<Ball, 16> &balls);
   void SendChat(const std::string &msg);
-  void SendAim(double tipX, double tipY, double power);
+  void SendAim(double tipX, double tipY, double power, double aimX, double aimY);
   void SendBye();
   void SendRoomClosed();
 
@@ -45,7 +45,7 @@ public:
   bool HasReady() const;
   bool HasUnready() const;
   bool HasShot(ShotParams *out) const;
-  bool HasAim(double *tipX, double *tipY, double *power) const;
+  bool HasAim(double *tipX, double *tipY, double *power, double *aimX, double *aimY) const;
   bool HasChat(std::string *msg) const;
   bool HasBye() const;
   bool HasClient() const;
@@ -73,7 +73,7 @@ private:
   bool clientGone_;
   std::string joinPwd_;
   ShotParams shotParams_;
-  double aimTipX_, aimTipY_, aimPower_;
+  double aimTipX_, aimTipY_, aimPower_, aimDirX_, aimDirY_;
   std::string chatMsg_;
 
   void Broadcast();
@@ -103,7 +103,7 @@ public:
   void SendUnready();
   void SendShot(double tipX, double tipY, double power, double aimX,
                 double aimY);
-  void SendAim(double tipX, double tipY, double power);
+  void SendAim(double tipX, double tipY, double power, double aimX, double aimY);
   void SendChat(const std::string &msg);
   void SendBye();
 
@@ -114,7 +114,7 @@ public:
   bool HasTurn(int *player) const;
   bool HasPositions(std::array<Ball, 16> *balls) const;
   bool HasShot(ShotParams *out) const;
-  bool HasAim(double *tipX, double *tipY, double *power) const;
+  bool HasAim(double *tipX, double *tipY, double *power, double *aimX, double *aimY) const;
   bool HasChat(std::string *msg) const;
   bool HasBye() const;
   bool HasRoomClosed() const;
@@ -147,7 +147,7 @@ private:
   bool hasRoomClosed_;
   int turnPlayer_;
   ShotParams shotParams_;
-  double aimTipX_, aimTipY_, aimPower_;
+  double aimTipX_, aimTipY_, aimPower_, aimDirX_, aimDirY_;
   std::string chatMsg_;
 
   void ProcessIncoming();

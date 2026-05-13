@@ -265,10 +265,12 @@ void NetworkHost::ProcessIncoming() {
       shotParams_.power = pw;
     } else if (msg.rfind("AIM ", 0) == 0) {
       hasAim_ = true;
-      double pw;
-      std::sscanf(msg.c_str(), "AIM %lf %lf %lf", &aimTipX_, &aimTipY_,
-                  &pw);
+      double pw, ax, ay;
+      std::sscanf(msg.c_str(), "AIM %lf %lf %lf %lf %lf", &aimTipX_, &aimTipY_,
+                  &pw, &ax, &ay);
       aimPower_ = pw;
+      aimDirX_ = ax;
+      aimDirY_ = ay;
     } else if (msg.rfind("CHAT ", 0) == 0) {
       hasChat_ = true;
       chatMsg_ = msg.substr(5);
@@ -314,9 +316,12 @@ void NetworkHost::SendTurn(int player) {
 }
 void NetworkHost::SendPositions(const std::array<Ball, 16> &balls) {
   std::string msg = "POS";
-  char num[64];
+  char num[96];
   for (const Ball &b : balls) {
-    std::snprintf(num, sizeof(num), " %.6f %.6f", b.pos.x, b.pos.y);
+    int flags = 0;
+    if (b.pocketed) flags |= 2;
+    if (b.sinking) flags |= 1;
+    std::snprintf(num, sizeof(num), " %.6f %.6f %d", b.pos.x, b.pos.y, flags);
     msg += num;
   }
   SendLine(msg);
@@ -324,9 +329,9 @@ void NetworkHost::SendPositions(const std::array<Ball, 16> &balls) {
 void NetworkHost::SendChat(const std::string &msg) {
   SendLine("CHAT " + msg);
 }
-void NetworkHost::SendAim(double tipX, double tipY, double power) {
-  char buf[128];
-  std::snprintf(buf, sizeof(buf), "AIM %.6f %.6f %.6f", tipX, tipY, power);
+void NetworkHost::SendAim(double tipX, double tipY, double power, double aimX, double aimY) {
+  char buf[192];
+  std::snprintf(buf, sizeof(buf), "AIM %.6f %.6f %.6f %.6f %.6f", tipX, tipY, power, aimX, aimY);
   SendLine(buf);
 }
 void NetworkHost::SendBye() { SendLine("BYE"); }
@@ -343,11 +348,13 @@ bool NetworkHost::HasShot(ShotParams *out) const {
   return hasShot_;
 }
 bool NetworkHost::HasAim(double *tipX, double *tipY,
-                         double *power) const {
+                          double *power, double *aimX, double *aimY) const {
   if (hasAim_) {
     if (tipX) *tipX = aimTipX_;
     if (tipY) *tipY = aimTipY_;
     if (power) *power = aimPower_;
+    if (aimX) *aimX = aimDirX_;
+    if (aimY) *aimY = aimDirY_;
   }
   return hasAim_;
 }
@@ -587,10 +594,12 @@ void NetworkClient::ProcessIncoming() {
       shotParams_.power = pw;
     } else if (msg.rfind("AIM ", 0) == 0) {
       hasAim_ = true;
-      double pw;
-      std::sscanf(msg.c_str(), "AIM %lf %lf %lf", &aimTipX_, &aimTipY_,
-                  &pw);
+      double pw, ax, ay;
+      std::sscanf(msg.c_str(), "AIM %lf %lf %lf %lf %lf", &aimTipX_, &aimTipY_,
+                  &pw, &ax, &ay);
       aimPower_ = pw;
+      aimDirX_ = ax;
+      aimDirY_ = ay;
     } else if (msg.rfind("CHAT ", 0) == 0) {
       hasChat_ = true;
       chatMsg_ = msg.substr(5);
@@ -632,9 +641,9 @@ void NetworkClient::SendShot(double tipX, double tipY, double power,
                 power, aimX, aimY);
   SendLine(buf);
 }
-void NetworkClient::SendAim(double tipX, double tipY, double power) {
-  char buf[128];
-  std::snprintf(buf, sizeof(buf), "AIM %.6f %.6f %.6f", tipX, tipY, power);
+void NetworkClient::SendAim(double tipX, double tipY, double power, double aimX, double aimY) {
+  char buf[192];
+  std::snprintf(buf, sizeof(buf), "AIM %.6f %.6f %.6f %.6f %.6f", tipX, tipY, power, aimX, aimY);
   SendLine(buf);
 }
 void NetworkClient::SendChat(const std::string &msg) {
@@ -657,9 +666,12 @@ bool NetworkClient::HasPositions(std::array<Ball, 16> *balls) const {
     std::istringstream ss(lastPosData_);
     for (int i = 0; i < 16; ++i) {
       double x, y;
-      if (!(ss >> x >> y)) break;
+      int flags = 0;
+      if (!(ss >> x >> y >> flags)) break;
       (*balls)[i].pos.x = x;
       (*balls)[i].pos.y = y;
+      (*balls)[i].pocketed = (flags & 2) != 0;
+      (*balls)[i].sinking = (flags & 1) != 0;
     }
   }
   return hasPositions_;
@@ -669,11 +681,13 @@ bool NetworkClient::HasShot(ShotParams *out) const {
   return hasShot_;
 }
 bool NetworkClient::HasAim(double *tipX, double *tipY,
-                           double *power) const {
+                            double *power, double *aimX, double *aimY) const {
   if (hasAim_) {
     if (tipX) *tipX = aimTipX_;
     if (tipY) *tipY = aimTipY_;
     if (power) *power = aimPower_;
+    if (aimX) *aimX = aimDirX_;
+    if (aimY) *aimY = aimDirY_;
   }
   return hasAim_;
 }

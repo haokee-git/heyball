@@ -238,17 +238,17 @@ void T7_Aim() {
   PollFor(0.6, host, client);
   Check(ConnectAndAccept(host, client, ""), "accepted");
 
-  client.SendAim(0.2, 0.8, 0.45);
-  Check(Await(0.5, [&]() { return host.HasAim(nullptr,nullptr,nullptr); }, &host, &client), "host got AIM");
-  double tx, ty, pw;
-  host.HasAim(&tx, &ty, &pw);
+  client.SendAim(0.2, 0.8, 0.45, 1.0, 0.0);
+  Check(Await(0.5, [&]() { return host.HasAim(nullptr,nullptr,nullptr,nullptr,nullptr); }, &host, &client), "host got AIM");
+  double tx, ty, pw, ax, ay;
+  host.HasAim(&tx, &ty, &pw, &ax, &ay);
   Check(std::abs(tx - 0.2) < 0.001, "aim tx ok");
   Check(std::abs(ty - 0.8) < 0.001, "aim ty ok");
   Check(std::abs(pw - 0.45) < 0.001, "aim pw ok");
 
-  host.SendAim(-0.5, 0.0, 0.9);
-  Check(Await(0.5, [&]() { return client.HasAim(nullptr,nullptr,nullptr); }, &host, &client), "client got AIM");
-  client.HasAim(&tx, &ty, &pw);
+  host.SendAim(-0.5, 0.0, 0.9, 0.0, 1.0);
+  Check(Await(0.5, [&]() { return client.HasAim(nullptr,nullptr,nullptr,nullptr,nullptr); }, &host, &client), "client got AIM");
+  client.HasAim(&tx, &ty, &pw, &ax, &ay);
   Check(std::abs(tx + 0.5) < 0.001, "host aim tx ok");
   Check(std::abs(pw - 0.9) < 0.001, "host aim pw ok");
 

@@ -1,3 +1,2 @@
-#include "D:/heyball/src/resource.h"
-
-IDR_PINGFANG_SC RCDATA "C:/Windows/Fonts/PingFangSC.otf"
+#define IDR_MSYH 101
+IDR_MSYH RCDATA "D:/heyball/assets/msyh_regular.ttf"

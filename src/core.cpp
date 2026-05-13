@@ -9,10 +9,10 @@ namespace {
 constexpr double kRestitutionBall = 0.965;
 constexpr double kRestitutionRail = 0.780;
 constexpr double kGravity = 9.80665;
-constexpr double kSlideMu = 0.200;
-constexpr double kRollDrag = 0.300;
+constexpr double kSlideMu = 0.18;
+constexpr double kRollDrag = 0.18;
 constexpr double kSideDecay = 0.42;
-constexpr double kCueMaxSpeed = 4.85;
+constexpr double kCueMaxSpeed = 7.0;
 constexpr double kRailGrip = 0.28;
 constexpr double kRailSpinLoss = 0.97;
 std::array<Vec2, 6> PocketCenters() {
@@ -652,8 +652,8 @@ void PhysicsWorld::ResolveBallContacts(ShotEvents *events) {
 
         const Vec2 t = Perp(n);
         const double tangentSpeed =
-            Dot(rel, t) + (a.sideOmega + b.sideOmega) * kBallRadius;
-        double jt = -tangentSpeed / 3.4;
+            Dot(rel, t) - (a.sideOmega + b.sideOmega) * kBallRadius;
+        double jt = -tangentSpeed / 7.0;
         const double maxTangent = std::abs(jn) * 0.10;
         jt = Clamp(jt, -maxTangent, maxTangent);
         a.vel -= t * jt;
@@ -702,7 +702,7 @@ void PhysicsWorld::ResolveRailContacts(ShotEvents *events) {
 
       if (normalImpulse > 0.0) {
         const Vec2 t = Perp(normal);
-        const double slipT = Dot(ball.vel, t) + ball.sideOmega * kBallRadius;
+        const double slipT = Dot(ball.vel, t) - ball.sideOmega * kBallRadius;
         double tangentImpulse = -slipT / 3.5;
         const double maxGrip = normalImpulse * kRailGrip;
         tangentImpulse = Clamp(tangentImpulse, -maxGrip, maxGrip);
