@@ -14,6 +14,7 @@ struct RoomInfo {
   std::string hostIP;
   bool hasPassword = false;
   int playerCount = 1;
+  double lastSeen = 0.0;
 };
 
 class NetworkHost {
@@ -35,6 +36,8 @@ public:
   void SendAssign(int player);
   void SendTurn(int player);
   void SendPositions(const std::array<Ball, 16> &balls);
+  void SendShot(double tipX, double tipY, double power, double aimX,
+                double aimY);
   void SendChat(const std::string &msg);
   void SendAim(double tipX, double tipY, double power, double aimX, double aimY);
   void SendBye();

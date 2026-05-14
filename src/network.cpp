@@ -149,6 +149,9 @@ NetworkHost::~NetworkHost() { Stop(); }
 bool NetworkHost::Start(const std::string &roomName,
                         const std::string &password, bool hostIsPlayer1) {
   Stop();
+  hasJoin_ = hasReady_ = hasUnready_ = hasShot_ = hasAim_ = hasChat_ = hasBye_ = false;
+  joinPwd_.clear();
+  chatMsg_.clear();
   SOCKET udp = CreateUdpSocket(false);
   if (udp == INVALID_SOCKET) return false;
   SOCKET tcp = CreateTcpListen();
@@ -161,6 +164,7 @@ bool NetworkHost::Start(const std::string &roomName,
   roomName_ = roomName;
   password_ = password;
   hostIsPlayer1_ = hostIsPlayer1;
+  lastBroadcast_ = 0.0;
   clientGone_ = false;
   return true;
 }
@@ -180,6 +184,10 @@ void NetworkHost::Stop() {
   }
   pendingMsgs_.clear();
   recvBuf_.clear();
+  hasJoin_ = hasReady_ = hasUnready_ = hasShot_ = hasAim_ = hasChat_ = hasBye_ = false;
+  joinPwd_.clear();
+  chatMsg_.clear();
+  clientGone_ = false;
 }
 
 void NetworkHost::Poll() {
@@ -195,8 +203,7 @@ void NetworkHost::Poll() {
 void NetworkHost::Broadcast() {
   SOCKET udp = ToSock(udpSock_);
   if (udp == INVALID_SOCKET) return;
-  bool hasClient =
-      ToSock(tcpClient_) != INVALID_SOCKET && !clientGone_;
+  bool hasClient = ToSock(tcpClient_) != INVALID_SOCKET;
   char buf[256];
   std::snprintf(buf, sizeof(buf), "%s%s%s%s%d%s%d", kMagic, kDelim,
                 roomName_.c_str(), kDelim,
@@ -211,6 +218,7 @@ void NetworkHost::Broadcast() {
 }
 
 void NetworkHost::ProcessIncoming() {
+  hasJoin_ = hasReady_ = hasUnready_ = hasShot_ = hasAim_ = hasChat_ = hasBye_ = false;
   // Accept new client
   SOCKET listenSock = ToSock(tcpListen_);
   if (listenSock != INVALID_SOCKET &&
@@ -221,6 +229,7 @@ void NetworkHost::ProcessIncoming() {
       tcpClient_ = FromSock(client);
       pendingMsgs_.clear();
       recvBuf_.clear();
+      clientGone_ = false;
     }
   }
 
@@ -231,6 +240,7 @@ void NetworkHost::ProcessIncoming() {
   char buf[4096];
   int n = recv(client, buf, sizeof(buf) - 1, 0);
   if (n > 0) {
+    clientGone_ = false;
     buf[n] = '\0';
     recvBuf_ += buf;
     auto lines = SplitLines(recvBuf_);
@@ -241,7 +251,6 @@ void NetworkHost::ProcessIncoming() {
     tcpClient_ = FromSock(INVALID_SOCKET);
   }
 
-  hasJoin_ = hasReady_ = hasUnready_ = hasShot_ = hasAim_ = hasChat_ = hasBye_ = false;
   for (auto &msg : pendingMsgs_) {
     if (msg.rfind("JOIN ", 0) == 0) {
       hasJoin_ = true;
@@ -316,15 +325,23 @@ void NetworkHost::SendTurn(int player) {
 }
 void NetworkHost::SendPositions(const std::array<Ball, 16> &balls) {
   std::string msg = "POS";
-  char num[96];
+  char num[128];
   for (const Ball &b : balls) {
     int flags = 0;
     if (b.pocketed) flags |= 2;
     if (b.sinking) flags |= 1;
-    std::snprintf(num, sizeof(num), " %.6f %.6f %d", b.pos.x, b.pos.y, flags);
+    std::snprintf(num, sizeof(num), " %.6f %.6f %d %.6f", b.pos.x, b.pos.y,
+                  flags, b.pocketFade);
     msg += num;
   }
   SendLine(msg);
+}
+void NetworkHost::SendShot(double tipX, double tipY, double power,
+                           double aimX, double aimY) {
+  char buf[256];
+  std::snprintf(buf, sizeof(buf), "SHOT %.6f %.6f %.6f %.6f %.6f", tipX, tipY,
+                power, aimX, aimY);
+  SendLine(buf);
 }
 void NetworkHost::SendChat(const std::string &msg) {
   SendLine("CHAT " + msg);
@@ -394,6 +411,12 @@ NetworkClient::~NetworkClient() { Stop(); }
 
 bool NetworkClient::Start() {
   Stop();
+  rooms_.clear();
+  pendingMsgs_.clear();
+  recvBuf_.clear();
+  rejectReason_.clear();
+  hasReadyAck_ = hasUnreadyAck_ = hasAssign_ = hasTurn_ = hasPositions_ = hasShot_ = false;
+  hasAim_ = hasChat_ = hasBye_ = hasRoomClosed_ = false;
   SOCKET udp = CreateUdpSocket(true);
   if (udp == INVALID_SOCKET) return false;
   udpSock_ = FromSock(udp);
@@ -438,6 +461,7 @@ void NetworkClient::Poll() {
           ri.hostIP = inet_ntoa(from.sin_addr);
           ri.hasPassword = (parts[2] == "1");
           ri.playerCount = (parts.size() >= 5) ? std::stoi(parts[3]) : 1;
+          ri.lastSeen = GetTime();
           bool found = false;
           for (auto &r : rooms_) {
             if (r.hostIP == ri.hostIP && r.name == ri.name) {
@@ -456,10 +480,25 @@ void NetworkClient::Poll() {
 
   // Expire old rooms (none for now — keep until restart)
 
+  const double now = GetTime();
+  rooms_.erase(std::remove_if(rooms_.begin(), rooms_.end(),
+                              [now](const RoomInfo &room) {
+                                return now - room.lastSeen > 2.0;
+                              }),
+               rooms_.end());
+
   ProcessIncoming();
 }
 
-std::vector<RoomInfo> NetworkClient::GetRooms() { return rooms_; }
+std::vector<RoomInfo> NetworkClient::GetRooms() {
+  const double now = GetTime();
+  rooms_.erase(std::remove_if(rooms_.begin(), rooms_.end(),
+                              [now](const RoomInfo &room) {
+                                return now - room.lastSeen > 2.0;
+                              }),
+               rooms_.end());
+  return rooms_;
+}
 
 bool NetworkClient::Connect(const std::string &hostIP,
                             const std::string &password) {
@@ -502,6 +541,10 @@ void NetworkClient::Disconnect() {
   connecting_ = false;
   accepted_ = false;
   disconnected_ = true;
+  pendingMsgs_.clear();
+  recvBuf_.clear();
+  hasReadyAck_ = hasUnreadyAck_ = hasAssign_ = hasTurn_ = hasPositions_ = hasShot_ = false;
+  hasAim_ = hasChat_ = hasBye_ = hasRoomClosed_ = false;
 }
 
 bool NetworkClient::IsConnecting() const { return connecting_ && !accepted_; }
@@ -666,12 +709,14 @@ bool NetworkClient::HasPositions(std::array<Ball, 16> *balls) const {
     std::istringstream ss(lastPosData_);
     for (int i = 0; i < 16; ++i) {
       double x, y;
+      double fade = 0.0;
       int flags = 0;
-      if (!(ss >> x >> y >> flags)) break;
+      if (!(ss >> x >> y >> flags >> fade)) break;
       (*balls)[i].pos.x = x;
       (*balls)[i].pos.y = y;
       (*balls)[i].pocketed = (flags & 2) != 0;
-      (*balls)[i].sinking = (flags & 1) != 0;
+      (*balls)[i].sinking = !(*balls)[i].pocketed && (flags & 1) != 0;
+      (*balls)[i].pocketFade = (*balls)[i].pocketed ? 1.0 : fade;
     }
   }
   return hasPositions_;

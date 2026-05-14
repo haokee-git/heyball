@@ -12,6 +12,18 @@
 #include <vector>
 #ifdef _WIN32
 extern "C" __declspec(dllimport) int __stdcall AllocConsole(void);
+struct HeyballWinPoint {
+  long x;
+  long y;
+};
+extern "C" __declspec(dllimport) int __stdcall GetCursorPos(HeyballWinPoint *point);
+extern "C" __declspec(dllimport) short __stdcall GetAsyncKeyState(int key);
+extern "C" __declspec(dllimport) int __stdcall MultiByteToWideChar(
+    unsigned int codePage, unsigned long flags, const char *multiByteStr,
+    int multiByteCount, wchar_t *wideCharStr, int wideCharCount);
+extern "C" __declspec(dllimport) int __stdcall SetWindowPos(void *hwnd, void *insertAfter,
+                                                           int x, int y, int cx, int cy,
+                                                           unsigned int flags);
 #endif
 namespace {
 using hb::Ball;
@@ -20,7 +32,7 @@ using hb::Phase;
 using hb::ShotEvents;
 using hb::ShotParams;
 using hb::Vec2;
-constexpr int kUiFontSize = 128;
+constexpr int kUiFontSize = 96;
 void Utf8PopBack(std::string &s) {
   if (s.empty()) return;
   size_t i = s.size() - 1;
@@ -29,39 +41,38 @@ void Utf8PopBack(std::string &s) {
 }
 std::vector<int> BuildFontCodepoints() {
   std::vector<int> codepoints;
-  for (int c = 32; c <= 126; ++c) codepoints.push_back(c);
-  for (int c = 161; c <= 255; ++c) codepoints.push_back(c);
-  for (int c = 256; c <= 383; ++c) codepoints.push_back(c);
-  for (int c = 8192; c <= 8303; ++c) codepoints.push_back(c);
-  for (int c = 12288; c <= 12351; ++c) codepoints.push_back(c);
-  for (int c = 65280; c <= 65519; ++c) codepoints.push_back(c);
-  static const int extra[] = {
-    0x3001, 0x3002, 0x4E00, 0x4E0A, 0x4E0B, 0x4E0D, 0x4E14, 0x4E2D,
-    0x4E3A, 0x4E8C, 0x4EBA, 0x4F4D, 0x4F4E, 0x4FA7, 0x505C, 0x5148,
-    0x5165, 0x5168, 0x516B, 0x5173, 0x518D, 0x51C6, 0x51FB, 0x5217,
-    0x5219, 0x521B, 0x5224, 0x5230, 0x5236, 0x5237, 0x524D, 0x529B,
-    0x52A0, 0x52A8, 0x52A9, 0x534A, 0x5355, 0x539F, 0x53CC, 0x53D6,
-    0x53EF, 0x53F0, 0x53F3, 0x53F7, 0x5408, 0x540D, 0x540E, 0x5411,
-    0x5426, 0x56DE, 0x5728, 0x57DF, 0x585E, 0x590D, 0x5931, 0x59CB,
-    0x5B9A, 0x5BB6, 0x5BC6, 0x5BF9, 0x5C31, 0x5C40, 0x5DE6, 0x5DF1,
-    0x5DF2, 0x5E2E, 0x5E93, 0x5EA6, 0x5EFA, 0x5F00, 0x5F0F, 0x5F85,
-    0x5F97, 0x5FC5, 0x6001, 0x620F, 0x6211, 0x6216, 0x6218, 0x623F,
-    0x624B, 0x6253, 0x62E9, 0x6309, 0x63A5, 0x63A7, 0x6446, 0x653E,
-    0x6574, 0x65AD, 0x65B0, 0x65B9, 0x65E0, 0x65F6, 0x6682, 0x6709,
-    0x672A, 0x672C, 0x673A, 0x6746, 0x677F, 0x6807, 0x683C, 0x6B21,
-    0x6CA1, 0x6CD5, 0x6D88, 0x6E38, 0x6EDA, 0x70B9, 0x7136, 0x72AF,
-    0x72B6, 0x73A9, 0x7403, 0x7531, 0x767D, 0x7684, 0x76EE, 0x7784,
-    0x7801, 0x786E, 0x78B0, 0x79FB, 0x7A7A, 0x7B49, 0x7EBF, 0x7EC4,
-    0x7EE7, 0x7EEA, 0x7EED, 0x7F51, 0x7F6E, 0x8005, 0x8054, 0x80DC,
-    0x81EA, 0x8272, 0x83B7, 0x83DC, 0x843D, 0x84C4, 0x8868, 0x888B,
-    0x89C4, 0x89E6, 0x8BA4, 0x8BBE, 0x8BEF, 0x8BF7, 0x8C03, 0x8D25,
-    0x8D62, 0x8F6E, 0x8F93, 0x8FD8, 0x8FDB, 0x8FDE, 0x9009, 0x91CD,
-    0x94AE, 0x9519, 0x952E, 0x95F4, 0x9762, 0x987B, 0x9996, 0x9AD8,
-    0x9ED1, 0x9F20, 0xFF08, 0xFF09, 0xFF0C, 0xFF1A, 0xFF1B,
+  auto addRange = [&](int first, int last) {
+    for (int c = first; c <= last; ++c) codepoints.push_back(c);
   };
-  for (int c : extra) {
-    codepoints.push_back(c);
+  addRange(32, 126);
+  addRange(161, 255);
+  addRange(256, 383);
+  addRange(0x2000, 0x206F);
+  addRange(0x2100, 0x214F);
+  addRange(0x2190, 0x21FF);
+  addRange(0x2460, 0x24FF);
+  addRange(0x25A0, 0x25FF);
+  addRange(0x3000, 0x303F);
+  addRange(0xFE10, 0xFE1F);
+  addRange(0xFE30, 0xFE4F);
+  addRange(0xFF00, 0xFFEF);
+#ifdef _WIN32
+  constexpr unsigned int kGbCodePage = 936;
+  constexpr unsigned long kErrInvalidChars = 0x00000008;
+  for (int high = 0xA1; high <= 0xF7; ++high) {
+    for (int low = 0xA1; low <= 0xFE; ++low) {
+      const char bytes[2] = {static_cast<char>(high), static_cast<char>(low)};
+      wchar_t wide[2]{};
+      if (MultiByteToWideChar(kGbCodePage, kErrInvalidChars, bytes, 2, wide, 2) == 1) {
+        codepoints.push_back(static_cast<int>(wide[0]));
+      }
+    }
   }
+#else
+  addRange(0x4E00, 0x9FFF);
+#endif
+  std::sort(codepoints.begin(), codepoints.end());
+  codepoints.erase(std::unique(codepoints.begin(), codepoints.end()), codepoints.end());
   return codepoints;
 }
 void AppendUtf8(std::string &s, int codepoint) {
@@ -96,6 +107,13 @@ int Utf8NextPos(const std::string &s, int pos) {
   else if ((s[i] & 0xF0) == 0xE0) { if (i + 2 < len) return static_cast<int>(i + 3); }
   else if ((s[i] & 0xF8) == 0xF0) { if (i + 3 < len) return static_cast<int>(i + 4); }
   return static_cast<int>(i + 1);
+}
+int Utf8CodepointCount(const std::string &s) {
+  int count = 0;
+  for (int i = 0; i < static_cast<int>(s.size()); i = Utf8NextPos(s, i)) {
+    ++count;
+  }
+  return count;
 }
 void TextInsertAt(std::string &s, int &cursor, int codepoint) {
   if (codepoint < 0x80) {
@@ -196,8 +214,15 @@ struct Game {
   bool customFont = false;
   bool draggingTitle = false;
   int resizeMode = 0;
+  Vector2 windowActionMouseStart{};
+  Vector2 windowActionPosStart{};
+  int windowActionWidthStart = 0;
+  int windowActionHeightStart = 0;
   bool requestClose = false;
   bool helpOpen = false;
+  double splashStartTime = 0.0;
+  bool splashDone = false;
+  RenderTexture2D splashTexture{};
   // Saved single-player state for returning from lobby
   hb::PhysicsWorld savedWorld;
   hb::RulesEngine savedRules;
@@ -219,14 +244,22 @@ struct Game {
   std::string chatInputBuf;
   int chatInputCursor = 0;
   BackspaceRepeat bsRepeat;
+  BackspaceRepeat leftRepeat;
+  BackspaceRepeat rightRepeat;
+  BackspaceRepeat delRepeat;
+  bool textAllSelected = false;
   double lastAimSend = 0.0;
   double lastPosSend = 0.0;
   bool showCreateDlg = false;
+  bool showJoinPwdDlg = false;
   std::string createRoomName;
   int createNameCursor = 0;
   std::string createRoomPwd;
   int createPwdCursor = 0;
+  std::string createRoomNotice;
   bool createHostIsP1 = true;
+  std::string pendingJoinRoomName;
+  std::string pendingJoinHostIP;
   std::string joinPwdInput;
   int joinPwdCursor = 0;
   bool showPwd = false;
@@ -243,13 +276,57 @@ enum ResizeEdge {
   ResizeTop = 4,
   ResizeBottom = 8
 };
+Vector2 DesktopMousePosition() {
+#ifdef _WIN32
+  HeyballWinPoint point{};
+  if (GetCursorPos(&point)) {
+    return {static_cast<float>(point.x), static_cast<float>(point.y)};
+  }
+#endif
+  return GetMousePosition();
+}
+bool IsPrimaryMouseDown() {
+#ifdef _WIN32
+  constexpr int kVkLButton = 0x01;
+  return (GetAsyncKeyState(kVkLButton) & 0x8000) != 0;
+#else
+  return IsMouseButtonDown(MOUSE_LEFT_BUTTON);
+#endif
+}
+void ApplyWindowBounds(int x, int y, int width, int height) {
+#ifdef _WIN32
+  constexpr unsigned int kNoZOrder = 0x0004;
+  constexpr unsigned int kNoActivate = 0x0010;
+  if (void *handle = GetWindowHandle()) {
+    SetWindowPos(handle, nullptr, x, y, width, height, kNoZOrder | kNoActivate);
+    return;
+  }
+#endif
+  SetWindowPosition(x, y);
+  SetWindowSize(width, height);
+}
+void BeginWindowAction(Game &game, int resizeMode) {
+  game.resizeMode = resizeMode;
+  game.draggingTitle = resizeMode == ResizeNone;
+  game.windowActionMouseStart = DesktopMousePosition();
+  game.windowActionPosStart = GetWindowPosition();
+  game.windowActionWidthStart = GetScreenWidth();
+  game.windowActionHeightStart = GetScreenHeight();
+}
 View MakeView(int sw, int sh) {
   const float uiScale = static_cast<float>(
       hb::Clamp(std::min(sw / 1360.0, sh / 820.0), 0.72, 1.55));
-  const float margin = 78.0f * uiScale;
+  const float marginX = 78.0f * uiScale;
   const float uiReserve = 285.0f * uiScale;
-  const float availableW = static_cast<float>(sw) - margin * 2.0f - uiReserve;
-  const float availableH = static_cast<float>(sh) - margin * 2.0f;
+  const float framePad = 16.0f * uiScale;
+  const float topClearance = 86.0f * uiScale;
+  const float bottomClearance = 80.0f * uiScale;
+  const float availableW =
+      std::max(1.0f, static_cast<float>(sw) - marginX * 2.0f - uiReserve);
+  const float tableTop = topClearance + framePad;
+  const float tableBottom =
+      std::max(tableTop + 1.0f, static_cast<float>(sh) - bottomClearance - framePad);
+  const float availableH = tableBottom - tableTop;
   const float tableAspect = static_cast<float>(hb::kTableWidth / hb::kTableHeight);
   float w = availableW;
   float h = w / tableAspect;
@@ -257,7 +334,7 @@ View MakeView(int sw, int sh) {
     h = availableH;
     w = h * tableAspect;
   }
-  Rectangle r{margin, (static_cast<float>(sh) - h) * 0.5f, w, h};
+  Rectangle r{marginX, tableTop + (availableH - h) * 0.5f, w, h};
   return {r, w / hb::kTableWidth, uiScale};
 }
 Vector2 WorldToScreen(const View &view, Vec2 p) {
@@ -737,6 +814,9 @@ void DrawTable(const View &view) {
 void DrawDetailedCue(Vector2 cueBall, Vector2 aimDir, float ballR,
                      float power, const View &view);
 void DrawTaperedRect(Vector2 a, Vector2 b, float wA, float wB, Color color);
+std::string LocalPlayerLabel(const Game &game, int player);
+std::string LocalStatusMessage(const Game &game);
+void ApplySyncedBalls(Game &game);
 void DrawCueShadow(const Game &game, const View &view) {
   if (game.phase != Phase::Aiming || game.world.CueBall().pocketed ||
       game.world.CueBall().sinking) return;
@@ -816,9 +896,15 @@ void DrawTopStatus(Game &game) {
                 0.72, 1.55));
   const auto &rs = game.rules.State();
   char line[192]{};
-  std::snprintf(line, sizeof(line), "目前玩家%d击球    目标%s",
-                rs.currentPlayer + 1,
-                hb::GroupName(rs.players[rs.currentPlayer].group));
+  if (game.appMode == AppMode::PlayingOnline && game.onlineTurn >= 0) {
+    std::snprintf(line, sizeof(line), "目前%s击球    目标%s",
+                  LocalPlayerLabel(game, rs.currentPlayer).c_str(),
+                  hb::GroupName(rs.players[rs.currentPlayer].group));
+  } else {
+    std::snprintf(line, sizeof(line), "目前玩家%d击球    目标%s",
+                  rs.currentPlayer + 1,
+                  hb::GroupName(rs.players[rs.currentPlayer].group));
+  }
   const float fs = 26.0f * s;
   const Vector2 sz = MeasureTextEx(game.font, line, fs, 0.0f);
   const Vector2 pos{(GetScreenWidth() - sz.x) * 0.5f, 47.0f * s};
@@ -832,6 +918,53 @@ float UiScale() {
       hb::Clamp(std::min(GetScreenWidth() / 1360.0, GetScreenHeight() / 820.0),
                 0.72, 1.55));
 }
+float OnlineUiScale() {
+  return static_cast<float>(
+      hb::Clamp(std::min(GetScreenWidth() / 960.0, GetScreenHeight() / 600.0),
+                1.0, 1.65));
+}
+float OnlineChatWidth(float s) {
+  return 220.0f * s;
+}
+std::string ReplaceAll(std::string text, const std::string &from,
+                       const std::string &to) {
+  if (from.empty()) return text;
+  size_t pos = 0;
+  while ((pos = text.find(from, pos)) != std::string::npos) {
+    text.replace(pos, from.size(), to);
+    pos += to.size();
+  }
+  return text;
+}
+std::string LocalPlayerLabel(const Game &game, int player) {
+  if (game.appMode == AppMode::PlayingOnline && game.onlineTurn >= 0) {
+    return player == game.onlineTurn ? "你" : "对手";
+  }
+  return std::to_string(player + 1) + "号玩家";
+}
+std::string LocalStatusMessage(const Game &game) {
+  std::string msg = game.rules.State().message;
+  if (game.appMode == AppMode::PlayingOnline && game.onlineTurn >= 0) {
+    msg = ReplaceAll(msg, "1号玩家", LocalPlayerLabel(game, 0));
+    msg = ReplaceAll(msg, "2号玩家", LocalPlayerLabel(game, 1));
+  }
+  return msg;
+}
+void ApplySyncedBalls(Game &game) {
+  for (int i = 0; i < 16; ++i) {
+    Ball &dst = game.world.Balls()[i];
+    const Ball &src = game.syncedBalls[i];
+    dst.pos = src.pos;
+    dst.pocketed = src.pocketed;
+    dst.sinking = src.sinking;
+    dst.pocketFade = src.pocketed ? 1.0 : src.pocketFade;
+    dst.vel = {};
+    if (dst.pocketed || dst.sinking) {
+      dst.rollOmega = {};
+      dst.sideOmega = 0.0;
+    }
+  }
+}
 Rectangle ControlPanelRect(float s) {
   return {static_cast<float>(GetScreenWidth()) - 258.0f * s, 46.0f * s,
           224.0f * s, 390.0f * s};
@@ -839,11 +972,107 @@ Rectangle ControlPanelRect(float s) {
 Vector2 TipControlCenter(Rectangle panel, float s) {
   return {panel.x + 112.0f * s, panel.y + 146.0f * s};
 }
+constexpr float kTitleBarHeight = 40.0f;
+constexpr float kTitleWindowButtonWidth = 46.0f;
 Rectangle HelpButtonRect() {
-  return {188.0f, 0.0f, 72.0f, 34.0f};
+  return {204.0f, 0.0f, 78.0f, kTitleBarHeight};
 }
 Rectangle HelpWindowRect(float s) {
   return {108.0f * s, 54.0f * s, 520.0f * s, 314.0f * s};
+}
+constexpr int kMaxRoomNameChars = 24;
+constexpr int kMaxRoomPasswordChars = 20;
+struct CreateRoomDialogLayout {
+  Rectangle panel{};
+  Rectangle nameBox{};
+  Rectangle pwdBox{};
+  Rectangle showPwd{};
+  Rectangle p1{};
+  Rectangle p2{};
+  Rectangle ok{};
+  Rectangle cancel{};
+  float scale = 1.0f;
+};
+CreateRoomDialogLayout CreateRoomLayout() {
+  const float sw = static_cast<float>(GetScreenWidth());
+  const float sh = static_cast<float>(GetScreenHeight());
+  const float s = OnlineUiScale();
+  const float cw = hb::Clamp(sw * 0.52f, 520.0f * s, 760.0f * s);
+  const float ch = hb::Clamp(sh * 0.58f, 390.0f * s, 500.0f * s);
+  const float cx = sw * 0.5f - cw * 0.5f;
+  const float cy = sh * 0.5f - ch * 0.5f;
+  const float pad = 24.0f * s;
+  const float boxH = 34.0f * s;
+  const float showW = 104.0f * s;
+  CreateRoomDialogLayout l{};
+  l.panel = {cx, cy, cw, ch};
+  l.nameBox = {cx + pad, cy + 82.0f * s, cw - pad * 2.0f, boxH};
+  l.pwdBox = {cx + pad, cy + 164.0f * s, cw - pad * 2.0f - showW - 10.0f * s, boxH};
+  l.showPwd = {l.pwdBox.x + l.pwdBox.width + 10.0f * s, l.pwdBox.y, showW, boxH};
+  l.p1 = {cx + pad, cy + 242.0f * s, 96.0f * s, 32.0f * s};
+  l.p2 = {l.p1.x + l.p1.width + 14.0f * s, l.p1.y, 112.0f * s, 32.0f * s};
+  l.ok = {cx + cw * 0.5f - 92.0f * s, cy + ch - 58.0f * s, 82.0f * s, 34.0f * s};
+  l.cancel = {cx + cw * 0.5f + 14.0f * s, l.ok.y, 82.0f * s, 34.0f * s};
+  l.scale = s;
+  return l;
+}
+void ResetCreateRoomDialog(Game &game) {
+  game.host.Stop();
+  game.showCreateDlg = true;
+  game.showJoinPwdDlg = false;
+  game.createDlgFocus = 0;
+  game.createRoomName = "我的房间";
+  game.createNameCursor = static_cast<int>(game.createRoomName.size());
+  game.createRoomPwd.clear();
+  game.createPwdCursor = 0;
+  game.createRoomNotice.clear();
+  game.showPwd = false;
+  game.createHostIsP1 = true;
+  game.textAllSelected = false;
+}
+void CloseCreateRoomDialog(Game &game) {
+  game.showCreateDlg = false;
+  game.createRoomNotice.clear();
+  game.createRoomPwd.clear();
+  game.showPwd = false;
+  game.textAllSelected = false;
+  game.bsRepeat.wasDown = false;
+  game.leftRepeat.wasDown = false;
+  game.rightRepeat.wasDown = false;
+  game.delRepeat.wasDown = false;
+}
+void OpenJoinPasswordDialog(Game &game, const hb::RoomInfo &room) {
+  game.showCreateDlg = false;
+  game.showJoinPwdDlg = true;
+  game.pendingJoinRoomName = room.name;
+  game.pendingJoinHostIP = room.hostIP;
+  game.joinPwdInput.clear();
+  game.joinPwdCursor = 0;
+  game.textAllSelected = false;
+  game.bsRepeat.wasDown = false;
+  game.leftRepeat.wasDown = false;
+  game.rightRepeat.wasDown = false;
+  game.delRepeat.wasDown = false;
+}
+void CloseJoinPasswordDialog(Game &game) {
+  game.showJoinPwdDlg = false;
+  game.pendingJoinRoomName.clear();
+  game.pendingJoinHostIP.clear();
+  game.joinPwdInput.clear();
+  game.joinPwdCursor = 0;
+  game.bsRepeat.wasDown = false;
+}
+Rectangle LobbyCreateButtonRect() {
+  const float s = OnlineUiScale();
+  const float w = 154.0f * s;
+  const float h = 40.0f * s;
+  return {static_cast<float>(GetScreenWidth()) - 30.0f * s - w,
+          static_cast<float>(GetScreenHeight()) - 28.0f * s - h, w, h};
+}
+Rectangle LobbyRefreshButtonRect() {
+  const float s = OnlineUiScale();
+  const Rectangle create = LobbyCreateButtonRect();
+  return {create.x - 18.0f * s - 132.0f * s, create.y, 132.0f * s, create.height};
 }
 void DrawTaperedRect(Vector2 a, Vector2 b, float wA, float wB, Color color) {
   const float dx = b.x - a.x, dy = b.y - a.y;
@@ -927,7 +1156,6 @@ void DrawUI(Game &game) {
   Rectangle panel = ControlPanelRect(s);
   DrawRoundedFillWithBorder(panel, 0.045f, 12, {12, 13, 14, 232},
                             {50, 58, 55, 190});
-  const auto &rs = game.rules.State();
   DrawTextF(game.font, "击球设置", {panel.x + 18 * s, panel.y + 17 * s}, 27 * s,
             {236, 238, 228, 255});
   DrawTextF(game.font, "击点", {panel.x + 18 * s, panel.y + 61 * s}, 22 * s,
@@ -969,14 +1197,16 @@ void DrawUI(Game &game) {
   float msgX = 48.0f * s;
   float msgW = static_cast<float>(GetScreenWidth()) - 96.0f * s;
   if (game.appMode == AppMode::PlayingOnline) {
-    const float chatRight = 12.0f * s + 280.0f * s;
-    msgX = chatRight + 20.0f * s;
+    const float os = OnlineUiScale();
+    const float chatRight = 12.0f * os + OnlineChatWidth(os);
+    msgX = chatRight + 20.0f * os;
     msgW = static_cast<float>(GetScreenWidth()) - msgX - 48.0f * s;
   }
   Rectangle msg{msgX, static_cast<float>(GetScreenHeight()) - 58.0f * s,
                 msgW, 34.0f * s};
   DrawRectangleRounded(msg, 0.08f, 8, {9, 10, 10, 210});
-  DrawTextF(game.font, rs.message.c_str(), {msg.x + 14 * s, msg.y + 6 * s}, 22 * s, {221, 224, 216, 255});
+  const std::string msgText = LocalStatusMessage(game);
+  DrawTextF(game.font, msgText.c_str(), {msg.x + 14 * s, msg.y + 6 * s}, 22 * s, {221, 224, 216, 255});
   if (game.phase == Phase::GroupChoice) {
     DrawBackdrop();
     Rectangle modal{static_cast<float>(GetScreenWidth()) * 0.5f - 170.0f,
@@ -1018,7 +1248,7 @@ void DrawWindowButton(Rectangle r, WindowButtonKind kind, bool hot) {
                       ? Color{236, 210, 205, 255}
                       : Color{198, 204, 197, 235};
   const Vector2 center{r.x + r.width * 0.5f, r.y + r.height * 0.5f};
-  const float s = 8.0f;
+  const float s = 9.2f;
   if (kind == WindowButtonKind::Minimize) {
     DrawLineEx({center.x - s * 0.75f, center.y + 4.0f},
                {center.x + s * 0.75f, center.y + 4.0f}, 1.5f, c);
@@ -1046,11 +1276,20 @@ void DrawDetailedCue(Vector2 cueBall, Vector2 aimDir, float ballR,
                      float power, const View &view);
 void DrawTextInputWithCursor(Font font, const std::string &text, int cursor,
                               Vector2 pos, float fontSize, Color color,
-                              bool showCursor) {
+                              bool showCursor, bool allSelected = false) {
   std::string before = text.substr(0, static_cast<size_t>(cursor));
-  std::string after = text.substr(static_cast<size_t>(cursor));
-  DrawTextF(font, before.c_str(), pos, fontSize, color);
   float cursorX = MeasureTextEx(font, before.c_str(), fontSize, 0.0f).x;
+  if (allSelected && !text.empty()) {
+    const Vector2 textSize = MeasureTextEx(font, text.c_str(), fontSize, 0.0f);
+    DrawRectangle(static_cast<int>(std::round(pos.x - 1.0f)),
+                  static_cast<int>(std::round(pos.y - 1.0f)),
+                  static_cast<int>(std::ceil(textSize.x + 3.0f)),
+                  static_cast<int>(std::ceil(fontSize * 1.12f)),
+                  {77, 99, 88, 210});
+    DrawTextF(font, text.c_str(), pos, fontSize, {248, 250, 242, 255});
+    return;
+  }
+  DrawTextF(font, text.c_str(), pos, fontSize, color);
   if (showCursor) {
     float barX = std::round(pos.x + cursorX);
     float barH = fontSize * 1.1f;
@@ -1058,13 +1297,11 @@ void DrawTextInputWithCursor(Font font, const std::string &text, int cursor,
     DrawRectangle(static_cast<int>(barX), static_cast<int>(barY), 2,
                   static_cast<int>(barH), color);
   }
-  Vector2 afterPos{pos.x + cursorX, pos.y};
-  DrawTextF(font, after.c_str(), afterPos, fontSize, color);
 }
 void DrawChatWindow(Game &game) {
   const float sh = static_cast<float>(GetScreenHeight());
-  const float us = UiScale();
-  const float cw = 280.0f * us;
+  const float us = OnlineUiScale();
+  const float cw = OnlineChatWidth(us);
   const float ch = 150.0f * us;
   const float cx = 12.0f * us;
   const float cy = sh - ch - 12.0f * us;
@@ -1084,13 +1321,113 @@ void DrawChatWindow(Game &game) {
     bool showCursor = (static_cast<int>(GetTime() * 2.0) % 2) != 0;
     DrawTextInputWithCursor(game.font, game.chatInputBuf, game.chatInputCursor,
                             {cx + 10.0f * us, cy + ch - 26.0f * us},
-                            15.0f * us, {238, 240, 232, 255}, showCursor);
+                            15.0f * us, {238, 240, 232, 255}, showCursor,
+                            game.textAllSelected);
   } else {
     DrawTextF(game.font, "Enter 输入消息", {cx + 8.0f * us, cy + ch - 22.0f * us},
               13.0f * us, {120, 128, 122, 200});
   }
 }
 void DrawCreateRoomDialog(Game &game) {
+  {
+    const CreateRoomDialogLayout l = CreateRoomLayout();
+    const float us = l.scale;
+    const Vector2 mouse = GetMousePosition();
+    const float pad = 24.0f * us;
+    DrawRectangleRounded(l.panel, 0.035f, 12, {12, 14, 14, 245});
+    DrawRectangleRoundedLines(l.panel, 0.035f, 12, {70, 82, 76, 210});
+    DrawTextF(game.font, "创建房间", {l.panel.x + pad, l.panel.y + 20.0f * us},
+              29.0f * us, {236, 238, 228, 255});
+    DrawTextF(game.font, "房间名", {l.panel.x + pad, l.panel.y + 61.0f * us},
+              20.0f * us, {190, 200, 188, 255});
+
+    Color nameBoxColor = game.createDlgFocus == 0 ? Color{35, 39, 36, 240}
+                                                  : Color{25, 27, 28, 220};
+    DrawRectangleRounded(l.nameBox, 0.06f, 6, nameBoxColor);
+    if (game.createDlgFocus == 0) {
+      DrawRectangleRoundedLines(l.nameBox, 0.06f, 6, {110, 140, 125, 180});
+    }
+    const bool nameShowCursor =
+        game.createDlgFocus == 0 && (static_cast<int>(GetTime() * 2.5) % 2) == 0;
+    DrawTextInputWithCursor(game.font, game.createRoomName, game.createNameCursor,
+                            {l.nameBox.x + 10.0f * us, l.nameBox.y + 5.0f * us},
+                            21.0f * us, {236, 240, 230, 255}, nameShowCursor,
+                            game.createDlgFocus == 0 && game.textAllSelected);
+    const int roomNameLen = Utf8CodepointCount(game.createRoomName);
+    char countText[64]{};
+    std::snprintf(countText, sizeof(countText), "%d/%d", roomNameLen, kMaxRoomNameChars);
+    const Vector2 countSize = MeasureTextEx(game.font, countText, 16.0f * us, 0.0f);
+    DrawTextF(game.font, countText,
+              {l.nameBox.x + l.nameBox.width - countSize.x - 6.0f * us,
+               l.nameBox.y + l.nameBox.height + 5.0f * us},
+              16.0f * us,
+              roomNameLen >= kMaxRoomNameChars ? Color{221, 184, 116, 255}
+                                               : Color{126, 139, 130, 230});
+    if (!game.createRoomNotice.empty()) {
+      DrawTextF(game.font, game.createRoomNotice.c_str(),
+                {l.nameBox.x, l.nameBox.y + l.nameBox.height + 5.0f * us},
+                16.0f * us, {221, 184, 116, 255});
+    }
+
+    DrawTextF(game.font, "密码（可选）", {l.panel.x + pad, l.panel.y + 143.0f * us},
+              20.0f * us, {190, 200, 188, 255});
+    Color pwdBoxColor = game.createDlgFocus == 1 ? Color{35, 39, 36, 240}
+                                                 : Color{25, 27, 28, 220};
+    DrawRectangleRounded(l.pwdBox, 0.06f, 6, pwdBoxColor);
+    if (game.createDlgFocus == 1) {
+      DrawRectangleRoundedLines(l.pwdBox, 0.06f, 6, {110, 140, 125, 180});
+    }
+    const std::string pwdDisplay =
+        game.showPwd ? game.createRoomPwd : std::string(game.createRoomPwd.size(), '*');
+    const bool pwdShowCursor =
+        game.createDlgFocus == 1 && (static_cast<int>(GetTime() * 2.5) % 2) == 0;
+    DrawTextInputWithCursor(game.font, pwdDisplay, game.createPwdCursor,
+                            {l.pwdBox.x + 10.0f * us, l.pwdBox.y + 5.0f * us},
+                            21.0f * us, {236, 240, 230, 255}, pwdShowCursor,
+                            game.createDlgFocus == 1 && game.textAllSelected);
+    const bool showPwdH = CheckCollisionPointRec(mouse, l.showPwd);
+    DrawRectangleRounded(l.showPwd, 0.08f, 6,
+                         showPwdH ? Color{45, 49, 48, 255} : Color{30, 33, 33, 255});
+    const char *showPwdLabel = game.showPwd ? "隐藏密码" : "显示密码";
+    const Vector2 showPwdSize = MeasureTextEx(game.font, showPwdLabel, 17.0f * us, 0.0f);
+    DrawTextF(game.font, showPwdLabel,
+              {l.showPwd.x + (l.showPwd.width - showPwdSize.x) * 0.5f,
+               l.showPwd.y + (l.showPwd.height - showPwdSize.y) * 0.5f},
+              17.0f * us, {214, 219, 211, 255});
+
+    DrawTextF(game.font, "先手", {l.panel.x + pad, l.panel.y + 221.0f * us},
+              20.0f * us, {190, 200, 188, 255});
+    Color p1Col = game.createHostIsP1 ? Color{57, 79, 72, 255} : Color{25, 27, 28, 220};
+    Color p2Col = game.createHostIsP1 ? Color{25, 27, 28, 220} : Color{57, 79, 72, 255};
+    if (CheckCollisionPointRec(mouse, l.p1)) {
+      p1Col.r = std::min(255, p1Col.r + 15);
+      p1Col.g = std::min(255, p1Col.g + 15);
+      p1Col.b = std::min(255, p1Col.b + 10);
+    }
+    if (CheckCollisionPointRec(mouse, l.p2)) {
+      p2Col.r = std::min(255, p2Col.r + 15);
+      p2Col.g = std::min(255, p2Col.g + 15);
+      p2Col.b = std::min(255, p2Col.b + 10);
+    }
+    DrawRectangleRounded(l.p1, 0.08f, 6, p1Col);
+    DrawTextF(game.font, "我", {l.p1.x + 36.0f * us, l.p1.y + 6.0f * us},
+              18.0f * us, {236, 240, 230, 255});
+    DrawRectangleRounded(l.p2, 0.08f, 6, p2Col);
+    DrawTextF(game.font, "客人", {l.p2.x + 34.0f * us, l.p2.y + 6.0f * us},
+              18.0f * us, {236, 240, 230, 255});
+
+    const bool okH = CheckCollisionPointRec(mouse, l.ok);
+    const bool cancelH = CheckCollisionPointRec(mouse, l.cancel);
+    DrawRectangleRounded(l.ok, 0.08f, 6,
+                         okH ? Color{77, 99, 88, 255} : Color{57, 79, 72, 255});
+    DrawTextF(game.font, "确定", {l.ok.x + 22.0f * us, l.ok.y + 7.0f * us},
+              18.0f * us, {236, 240, 230, 255});
+    DrawRectangleRounded(l.cancel, 0.08f, 6,
+                         cancelH ? Color{35, 39, 38, 240} : Color{25, 27, 28, 220});
+    DrawTextF(game.font, "取消", {l.cancel.x + 22.0f * us, l.cancel.y + 7.0f * us},
+              18.0f * us, {200, 205, 198, 255});
+    return;
+  }
   const float sw = static_cast<float>(GetScreenWidth());
   const float sh = static_cast<float>(GetScreenHeight());
   const float us = UiScale();
@@ -1146,8 +1483,7 @@ void DrawCreateRoomDialog(Game &game) {
 }
 void DrawLobby(Game &game) {
   const float sw = static_cast<float>(GetScreenWidth());
-  const float sh = static_cast<float>(GetScreenHeight());
-  const float us = UiScale();
+  const float us = OnlineUiScale();
   const Vector2 mouse = GetMousePosition();
   ClearBackground(BLACK);
   DrawTitleBar(game);
@@ -1174,19 +1510,19 @@ void DrawLobby(Game &game) {
   if (game.roomList.empty()) {
     DrawTextF(game.font, "(没有房间列表, 点击创建)", {50, y}, 16 * us, {120, 128, 122, 180});
   }
-  Rectangle createBtn{sw - 160, sh - 60, 130, 34};
+  Rectangle createBtn = LobbyCreateButtonRect();
   bool cHover = CheckCollisionPointRec(mouse, createBtn);
   DrawRectangleRounded(createBtn, 0.12f, 8, cHover ? Color{77, 99, 88, 255} : Color{57, 79, 72, 255});
-  DrawTextF(game.font, "创建房间", {createBtn.x + 18, createBtn.y + 6}, 18 * us, {236, 240, 230, 255});
-  Rectangle refreshBtn{sw - 310, sh - 60, 130, 34};
+  DrawTextF(game.font, "创建房间", {createBtn.x + 21.0f * us, createBtn.y + 8.0f * us}, 18 * us, {236, 240, 230, 255});
+  Rectangle refreshBtn = LobbyRefreshButtonRect();
   bool rHover = CheckCollisionPointRec(mouse, refreshBtn);
   DrawRectangleRounded(refreshBtn, 0.12f, 8, rHover ? Color{35, 39, 38, 240} : Color{25, 27, 28, 220});
-  DrawTextF(game.font, "刷新", {refreshBtn.x + 30, refreshBtn.y + 6}, 18 * us, {200, 205, 198, 255});
+  DrawTextF(game.font, "刷新", {refreshBtn.x + 42.0f * us, refreshBtn.y + 8.0f * us}, 18 * us, {200, 205, 198, 255});
 }
 void DrawRoomWait(Game &game) {
   const float sw = static_cast<float>(GetScreenWidth());
   const float sh = static_cast<float>(GetScreenHeight());
-  const float us = UiScale();
+  const float us = OnlineUiScale();
   const Vector2 mouse = GetMousePosition();
   ClearBackground(BLACK);
   DrawTitleBar(game);
@@ -1227,6 +1563,37 @@ void DrawRoomWait(Game &game) {
   DrawChatWindow(game);
 }
 void DrawJoinPasswordDialog(Game &game) {
+  {
+    const float sw = static_cast<float>(GetScreenWidth());
+    const float sh = static_cast<float>(GetScreenHeight());
+    const float us = OnlineUiScale();
+    const float cw = 360.0f * us;
+    const float ch = 170.0f * us;
+    const float cx = sw * 0.5f - cw * 0.5f;
+    const float cy = sh * 0.5f - ch * 0.5f;
+    DrawRectangleRounded({cx, cy, cw, ch}, 0.04f, 12, {12, 14, 14, 245});
+    DrawRectangleRoundedLines({cx, cy, cw, ch}, 0.04f, 12, {70, 82, 76, 210});
+    DrawTextF(game.font, "输入房间密码", {cx + 20.0f * us, cy + 18.0f * us},
+              24.0f * us, {236, 238, 228, 255});
+    std::string joinPwdMasked(game.joinPwdInput.size(), '*');
+    bool joinPwdCursorVisible = (static_cast<int>(GetTime() * 2.5) % 2) == 0;
+    DrawRectangleRounded({cx + 20.0f * us, cy + 62.0f * us, cw - 40.0f * us, 34.0f * us},
+                         0.08f, 6, {25, 27, 28, 235});
+    DrawTextInputWithCursor(game.font, joinPwdMasked, game.joinPwdCursor,
+                            {cx + 30.0f * us, cy + 68.0f * us},
+                            20.0f * us, {236, 240, 230, 255}, joinPwdCursorVisible,
+                            game.textAllSelected);
+    Rectangle okR{cx + cw * 0.5f - 82.0f * us, cy + ch - 48.0f * us,
+                  74.0f * us, 32.0f * us};
+    Rectangle cancelR{cx + cw * 0.5f + 10.0f * us, okR.y, 74.0f * us, 32.0f * us};
+    DrawRectangleRounded(okR, 0.1f, 6, {57, 79, 72, 255});
+    DrawTextF(game.font, "确定", {okR.x + 19.0f * us, okR.y + 6.0f * us},
+              17.0f * us, {236, 240, 230, 255});
+    DrawRectangleRounded(cancelR, 0.1f, 6, {25, 27, 28, 220});
+    DrawTextF(game.font, "取消", {cancelR.x + 19.0f * us, cancelR.y + 6.0f * us},
+              17.0f * us, {200, 205, 198, 255});
+    return;
+  }
   const float sw = static_cast<float>(GetScreenWidth());
   const float sh = static_cast<float>(GetScreenHeight());
   float cw = 280.0f, ch = 140.0f, cx = sw * 0.5f - cw * 0.5f, cy = sh * 0.5f - ch * 0.5f;
@@ -1248,29 +1615,33 @@ void DrawTitleBar(Game &game) {
   const float w = static_cast<float>(GetScreenWidth());
   const Vector2 mouse = GetMousePosition();
   const Rectangle helpR = HelpButtonRect();
-  const Rectangle netR{262.0f, 0.0f, 66.0f, 34.0f};
-  const Rectangle titleR{12.0f, 0.0f, 84.0f, 34.0f};
-  const Rectangle modeR{98.0f, 0.0f, 86.0f, 34.0f};
-  const Rectangle minR{w - 129.0f, 0.0f, 42.0f, 34.0f};
-  const Rectangle maxR{w - 86.0f, 0.0f, 42.0f, 34.0f};
-  const Rectangle closeR{w - 43.0f, 0.0f, 42.0f, 34.0f};
-  Rectangle bar{0.0f, 0.0f, w, 34.0f};
+  const Rectangle netR{286.0f, 0.0f, 74.0f, kTitleBarHeight};
+  const Rectangle titleR{12.0f, 0.0f, 92.0f, kTitleBarHeight};
+  const Rectangle modeR{106.0f, 0.0f, 96.0f, kTitleBarHeight};
+  const Rectangle closeR{w - kTitleWindowButtonWidth - 1.0f, 0.0f,
+                         kTitleWindowButtonWidth, kTitleBarHeight};
+  const Rectangle maxR{closeR.x - kTitleWindowButtonWidth - 1.0f, 0.0f,
+                       kTitleWindowButtonWidth, kTitleBarHeight};
+  const Rectangle minR{maxR.x - kTitleWindowButtonWidth - 1.0f, 0.0f,
+                       kTitleWindowButtonWidth, kTitleBarHeight};
+  Rectangle bar{0.0f, 0.0f, w, kTitleBarHeight};
   DrawRectangleRec(bar, BLACK);
-  DrawRectangle(0, 33, GetScreenWidth(), 1, {50, 57, 55, 120});
-  DrawTitleTextItem(game.font, titleR, "中式台球", 19.0f,
+  DrawRectangle(0, static_cast<int>(kTitleBarHeight - 1.0f), GetScreenWidth(), 1,
+                {50, 57, 55, 120});
+  DrawTitleTextItem(game.font, titleR, "中式台球", 21.0f,
                     {218, 224, 216, 255}, false);
   const char *modeLabel = "双人对战";
   if (game.appMode == AppMode::Lobby) modeLabel = "局域网联机";
   else if (game.appMode == AppMode::RoomHost || game.appMode == AppMode::RoomClient)
     modeLabel = "房间对战";
   else if (game.appMode == AppMode::PlayingOnline) modeLabel = "在线对战中";
-  DrawTitleTextItem(game.font, modeR, modeLabel, 17.0f,
+  DrawTitleTextItem(game.font, modeR, modeLabel, 18.5f,
                     {142, 154, 147, 230}, false);
-  DrawTitleTextItem(game.font, helpR, "帮助", 18.0f,
+  DrawTitleTextItem(game.font, helpR, "帮助", 19.5f,
                     {198, 204, 197, 235},
                     game.helpOpen || PointInRect(mouse, helpR));
   const char *netLabel = (game.appMode == AppMode::Single) ? "单机" : "联机";
-  DrawTitleTextItem(game.font, netR, netLabel, 17.0f,
+  DrawTitleTextItem(game.font, netR, netLabel, 18.5f,
                     {155, 190, 170, 235}, PointInRect(mouse, netR));
   DrawWindowButton(minR, WindowButtonKind::Minimize, PointInRect(mouse, minR));
   DrawWindowButton(maxR,
@@ -1283,6 +1654,76 @@ void DrawFpsCounter(Font font) {
   char text[32]{};
   std::snprintf(text, sizeof(text), "FPS %d", GetFPS());
   DrawTextF(font, text, {18.0f, 38.0f}, 18.0f, {180, 192, 184, 235});
+}
+float SmoothStep(float t) {
+  t = hb::Clamp(t, 0.0f, 1.0f);
+  return t * t * (3.0f - 2.0f * t);
+}
+bool SplashActive(const Game &game) {
+  constexpr double kSplashTotalSeconds = 4.1;
+  return !game.splashDone && GetTime() - game.splashStartTime < kSplashTotalSeconds;
+}
+bool SplashSkipPressed() {
+  return IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_ENTER) ||
+         IsKeyPressed(KEY_SPACE);
+}
+void DrawCenteredSplashText(Font font, const char *text, float centerX, float y,
+                            float fontSize, Color color) {
+  const Vector2 sz = MeasureTextEx(font, text, fontSize, 0.0f);
+  DrawTextF(font, text, {centerX - sz.x * 0.5f, y}, fontSize, color);
+}
+void EnsureSplashTexture(Game &game) {
+  if (game.splashTexture.texture.id != 0) return;
+  constexpr int kTextureW = 900;
+  constexpr int kTextureH = 300;
+  game.splashTexture = LoadRenderTexture(kTextureW, kTextureH);
+  if (game.splashTexture.texture.id == 0) return;
+  SetTextureFilter(game.splashTexture.texture, TEXTURE_FILTER_BILINEAR);
+  BeginTextureMode(game.splashTexture);
+  ClearBackground({0, 0, 0, 0});
+  const float cx = kTextureW * 0.5f;
+  float y = 42.0f;
+  DrawCenteredSplashText(game.font, "《健康游戏忠告》", cx, y, 42.0f,
+                         {236, 240, 230, 255});
+  y += 82.0f;
+  const char *lines[] = {
+      "抵制不良游戏，拒绝盗版游戏。",
+      "注意自我保护，谨防受骗上当。",
+      "适度游戏益脑，沉迷游戏伤身。",
+      "合理安排时间，享受健康生活。"};
+  for (const char *line : lines) {
+    DrawCenteredSplashText(game.font, line, cx, y, 28.0f,
+                           {198, 207, 198, 255});
+    y += 43.0f;
+  }
+  EndTextureMode();
+}
+void DrawHealthSplash(Game &game) {
+  constexpr double kFadeInSeconds = 0.70;
+  constexpr double kFadeStartSeconds = 2.45;
+  constexpr double kSplashTotalSeconds = 4.1;
+  EnsureSplashTexture(game);
+  const double elapsed = GetTime() - game.splashStartTime;
+  const float fadeInT = SmoothStep(static_cast<float>(elapsed / kFadeInSeconds));
+  const float fadeT = SmoothStep(static_cast<float>(
+      (elapsed - kFadeStartSeconds) / (kSplashTotalSeconds - kFadeStartSeconds)));
+  const unsigned char alpha = static_cast<unsigned char>(hb::Clamp(
+      static_cast<int>(std::round(255.0f * fadeInT * (1.0f - fadeT))), 0, 255));
+  ClearBackground(BLACK);
+  if (game.splashTexture.texture.id == 0) {
+    return;
+  }
+  const float s = UiScale() * (1.0f + 0.12f * fadeT);
+  const float dstW = game.splashTexture.texture.width * s;
+  const float dstH = game.splashTexture.texture.height * s;
+  const Rectangle src{0.0f, 0.0f,
+                      static_cast<float>(game.splashTexture.texture.width),
+                      -static_cast<float>(game.splashTexture.texture.height)};
+  const Rectangle dst{GetScreenWidth() * 0.5f - dstW * 0.5f,
+                      GetScreenHeight() * 0.5f - dstH * 0.5f,
+                      dstW, dstH};
+  DrawTexturePro(game.splashTexture.texture, src, dst, {0.0f, 0.0f}, 0.0f,
+                 {255, 255, 255, alpha});
 }
 void DrawHelpWindow(Game &game) {
   if (!game.helpOpen) {
@@ -1314,6 +1755,8 @@ void DrawHelpWindow(Game &game) {
 }
 bool HandleTitleBarInput(Game &game) {
   const Vector2 mouse = GetMousePosition();
+  const bool windowActionActive = game.draggingTitle || game.resizeMode != ResizeNone;
+  const bool leftDown = IsPrimaryMouseDown();
   const float w = static_cast<float>(GetScreenWidth());
   const float h = static_cast<float>(GetScreenHeight());
   constexpr float edge = 8.0f;
@@ -1338,16 +1781,24 @@ bool HandleTitleBarInput(Game &game) {
     }
   }
   const Rectangle helpR = HelpButtonRect();
-  const Rectangle netR{262.0f, 0.0f, 66.0f, 34.0f};
-  const Rectangle minR{w - 129.0f, 0.0f, 42.0f, 34.0f};
-  const Rectangle maxR{w - 86.0f, 0.0f, 42.0f, 34.0f};
-  const Rectangle closeR{w - 43.0f, 0.0f, 42.0f, 34.0f};
-  const Rectangle dragR{0.0f, 0.0f, w - 131.0f, 34.0f};
+  const Rectangle netR{286.0f, 0.0f, 74.0f, kTitleBarHeight};
+  const Rectangle closeR{w - kTitleWindowButtonWidth - 1.0f, 0.0f,
+                         kTitleWindowButtonWidth, kTitleBarHeight};
+  const Rectangle maxR{closeR.x - kTitleWindowButtonWidth - 1.0f, 0.0f,
+                       kTitleWindowButtonWidth, kTitleBarHeight};
+  const Rectangle minR{maxR.x - kTitleWindowButtonWidth - 1.0f, 0.0f,
+                       kTitleWindowButtonWidth, kTitleBarHeight};
+  const Rectangle dragR{0.0f, 0.0f, minR.x, kTitleBarHeight};
+  if (windowActionActive && !leftDown) {
+    game.draggingTitle = false;
+    game.resizeMode = ResizeNone;
+    return true;
+  }
   if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
     if (hit != ResizeNone && !PointInRect(mouse, minR) &&
         !PointInRect(mouse, maxR) && !PointInRect(mouse, closeR) &&
         !PointInRect(mouse, helpR) && !PointInRect(mouse, netR)) {
-      game.resizeMode = hit;
+      BeginWindowAction(game, hit);
       return true;
     }
     if (PointInRect(mouse, closeR)) {
@@ -1380,6 +1831,7 @@ bool HandleTitleBarInput(Game &game) {
         game.appMode = AppMode::Lobby;
         game.roomList.clear();
         game.showCreateDlg = false;
+        game.showJoinPwdDlg = false;
         game.client.Stop();
         game.host.Stop();
         game.client.Start();
@@ -1396,7 +1848,7 @@ bool HandleTitleBarInput(Game &game) {
       return true;
     }
     if (PointInRect(mouse, dragR)) {
-      game.draggingTitle = true;
+      BeginWindowAction(game, ResizeNone);
       return true;
     }
   }
@@ -1404,40 +1856,38 @@ bool HandleTitleBarInput(Game &game) {
     game.draggingTitle = false;
     game.resizeMode = ResizeNone;
   }
-  if (game.resizeMode != ResizeNone && IsMouseButtonDown(MOUSE_LEFT_BUTTON)) {
-    const Vector2 delta = GetMouseDelta();
-    Vector2 pos = GetWindowPosition();
-    int newW = GetScreenWidth();
-    int newH = GetScreenHeight();
+  if (game.resizeMode != ResizeNone && leftDown) {
+    const Vector2 pointer = DesktopMousePosition();
+    const int dx = static_cast<int>(std::round(pointer.x - game.windowActionMouseStart.x));
+    const int dy = static_cast<int>(std::round(pointer.y - game.windowActionMouseStart.y));
+    int newX = static_cast<int>(std::round(game.windowActionPosStart.x));
+    int newY = static_cast<int>(std::round(game.windowActionPosStart.y));
+    int newW = game.windowActionWidthStart;
+    int newH = game.windowActionHeightStart;
     if (game.resizeMode & ResizeLeft) {
-      const int proposed = newW - static_cast<int>(std::round(delta.x));
-      if (proposed >= minW) {
-        newW = proposed;
-        pos.x += delta.x;
-      }
+      newW = std::max(minW, game.windowActionWidthStart - dx);
+      newX += game.windowActionWidthStart - newW;
     }
     if (game.resizeMode & ResizeRight) {
-      newW = std::max(minW, newW + static_cast<int>(std::round(delta.x)));
+      newW = std::max(minW, game.windowActionWidthStart + dx);
     }
     if (game.resizeMode & ResizeTop) {
-      const int proposed = newH - static_cast<int>(std::round(delta.y));
-      if (proposed >= minH) {
-        newH = proposed;
-        pos.y += delta.y;
-      }
+      newH = std::max(minH, game.windowActionHeightStart - dy);
+      newY += game.windowActionHeightStart - newH;
     }
     if (game.resizeMode & ResizeBottom) {
-      newH = std::max(minH, newH + static_cast<int>(std::round(delta.y)));
+      newH = std::max(minH, game.windowActionHeightStart + dy);
     }
-    SetWindowPosition(static_cast<int>(pos.x), static_cast<int>(pos.y));
-    SetWindowSize(newW, newH);
+    ApplyWindowBounds(newX, newY, newW, newH);
     return true;
   }
-  if (game.draggingTitle && IsMouseButtonDown(MOUSE_LEFT_BUTTON)) {
-    const Vector2 delta = GetMouseDelta();
-    const Vector2 pos = GetWindowPosition();
-    SetWindowPosition(static_cast<int>(pos.x + delta.x),
-                      static_cast<int>(pos.y + delta.y));
+  if (game.draggingTitle && leftDown) {
+    const Vector2 pointer = DesktopMousePosition();
+    const int newX = static_cast<int>(std::round(
+        game.windowActionPosStart.x + pointer.x - game.windowActionMouseStart.x));
+    const int newY = static_cast<int>(std::round(
+        game.windowActionPosStart.y + pointer.y - game.windowActionMouseStart.y));
+    ApplyWindowBounds(newX, newY, game.windowActionWidthStart, game.windowActionHeightStart);
     return true;
   }
   return false;
@@ -1500,12 +1950,13 @@ void UpdateGame(Game &game, const View &view) {
     if (!game.chatInputActive) {
       game.chatInputActive = true;
       game.chatInputBuf.clear();
+      game.chatInputCursor = 0;
+      game.textAllSelected = false;
     } else if (!game.chatInputBuf.empty()) {
       if (game.appMode == AppMode::PlayingOnline) {
-        std::string prefix = game.host.HasClient() ? "对手: " : "我: ";
         if (game.host.HasClient()) game.host.SendChat(game.chatInputBuf);
         else game.client.SendChat(game.chatInputBuf);
-        game.chatHistory.push_back(prefix + game.chatInputBuf);
+        game.chatHistory.push_back("我: " + game.chatInputBuf);
       } else if (game.appMode == AppMode::RoomHost) {
         game.host.SendChat(game.chatInputBuf);
         game.chatHistory.push_back("我: " + game.chatInputBuf);
@@ -1515,6 +1966,8 @@ void UpdateGame(Game &game, const View &view) {
       }
       game.chatInputBuf.clear();
       game.chatInputActive = false;
+      game.chatInputCursor = 0;
+      game.textAllSelected = false;
     }
   }
   if (game.chatInputActive) {
@@ -1529,35 +1982,69 @@ void UpdateGame(Game &game, const View &view) {
       Vector2 m = GetMousePosition();
       if (CheckCollisionPointRec(m, inputBox)) {
         game.chatInputCursor = TextCursorFromMouseX(game.font, game.chatInputBuf, m.x, cx + 10.0f * us, 15.0f * us);
+        game.textAllSelected = false;
       }
     }
     int key = GetCharPressed();
     while (key > 0) {
+      if (game.textAllSelected) {
+        game.chatInputBuf.clear();
+        game.chatInputCursor = 0;
+        game.textAllSelected = false;
+      }
       if (key >= 32 && key <= 0x9FFF && static_cast<int>(game.chatInputBuf.size()) < 120)
         TextInsertAt(game.chatInputBuf, game.chatInputCursor, key);
       key = GetCharPressed();
     }
-    if (IsKeyPressed(KEY_LEFT))
-      game.chatInputCursor = Utf8PrevPos(game.chatInputBuf, game.chatInputCursor);
-    if (IsKeyPressed(KEY_RIGHT))
-      game.chatInputCursor = Utf8NextPos(game.chatInputBuf, game.chatInputCursor);
+    const double now = GetTime();
+    if (game.leftRepeat.tick(IsKeyDown(KEY_LEFT), now)) {
+      if (game.textAllSelected) {
+        game.chatInputCursor = 0;
+        game.textAllSelected = false;
+      } else {
+        game.chatInputCursor = Utf8PrevPos(game.chatInputBuf, game.chatInputCursor);
+      }
+    }
+    if (game.rightRepeat.tick(IsKeyDown(KEY_RIGHT), now)) {
+      if (game.textAllSelected) {
+        game.chatInputCursor = static_cast<int>(game.chatInputBuf.size());
+        game.textAllSelected = false;
+      } else {
+        game.chatInputCursor = Utf8NextPos(game.chatInputBuf, game.chatInputCursor);
+      }
+    }
     if (IsKeyPressed(KEY_HOME))
-      game.chatInputCursor = 0;
+      { game.chatInputCursor = 0; game.textAllSelected = false; }
     if (IsKeyPressed(KEY_END))
-      game.chatInputCursor = static_cast<int>(game.chatInputBuf.size());
-    if (IsKeyPressed(KEY_DELETE) && game.chatInputCursor < static_cast<int>(game.chatInputBuf.size()))
-      TextEraseAfter(game.chatInputBuf, game.chatInputCursor);
+      { game.chatInputCursor = static_cast<int>(game.chatInputBuf.size()); game.textAllSelected = false; }
+    if (game.delRepeat.tick(IsKeyDown(KEY_DELETE), now)) {
+      if (game.textAllSelected) {
+        game.chatInputBuf.clear();
+        game.chatInputCursor = 0;
+        game.textAllSelected = false;
+      } else if (game.chatInputCursor < static_cast<int>(game.chatInputBuf.size())) {
+        TextEraseAfter(game.chatInputBuf, game.chatInputCursor);
+      }
+    }
     bool ctrl = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
-    if (ctrl && IsKeyPressed(KEY_A))
+    if (ctrl && IsKeyPressed(KEY_A) && !game.chatInputBuf.empty()) {
       game.chatInputCursor = static_cast<int>(game.chatInputBuf.size());
-    double now = GetTime();
-    if (game.bsRepeat.tick(IsKeyDown(KEY_BACKSPACE), now) && game.chatInputCursor > 0) {
-      TextEraseBefore(game.chatInputBuf, game.chatInputCursor);
+      game.textAllSelected = true;
+    }
+    if (game.bsRepeat.tick(IsKeyDown(KEY_BACKSPACE), now)) {
+      if (game.textAllSelected) {
+        game.chatInputBuf.clear();
+        game.chatInputCursor = 0;
+        game.textAllSelected = false;
+      } else if (game.chatInputCursor > 0) {
+        TextEraseBefore(game.chatInputBuf, game.chatInputCursor);
+      }
     }
     if (IsKeyPressed(KEY_ESCAPE)) {
       game.chatInputActive = false;
       game.chatInputBuf.clear();
       game.chatInputCursor = 0;
+      game.textAllSelected = false;
     }
   }
   // Mode-specific updates
@@ -1567,16 +2054,114 @@ void UpdateGame(Game &game, const View &view) {
     if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
       Vector2 mouse = GetMousePosition();
       float sw = static_cast<float>(GetScreenWidth()), sh = static_cast<float>(GetScreenHeight());
-      Rectangle createBtn{sw - 160, sh - 60, 130, 34};
-      Rectangle refreshBtn{sw - 310, sh - 60, 130, 34};
+      Rectangle createBtn = LobbyCreateButtonRect();
+      Rectangle refreshBtn = LobbyRefreshButtonRect();
+      if (game.showCreateDlg) {
+        const CreateRoomDialogLayout l = CreateRoomLayout();
+        if (CheckCollisionPointRec(mouse, l.ok)) {
+          if (game.createRoomName.empty()) {
+            game.createRoomNotice = "房间名不能为空";
+          } else {
+            game.roomName = game.createRoomName;
+            game.roomPassword = game.createRoomPwd;
+            game.hostIsPlayer1 = game.createHostIsP1;
+            game.client.Stop();
+            if (game.host.Start(game.roomName, game.roomPassword, game.hostIsPlayer1)) {
+              game.appMode = AppMode::RoomHost;
+              game.amReady = false;
+              game.opReady = false;
+              game.chatHistory.clear();
+            }
+            CloseCreateRoomDialog(game);
+          }
+          return;
+        }
+        if (CheckCollisionPointRec(mouse, l.cancel)) {
+          game.host.Stop();
+          CloseCreateRoomDialog(game);
+          return;
+        }
+        if (CheckCollisionPointRec(mouse, l.p1)) {
+          game.createHostIsP1 = true;
+          return;
+        }
+        if (CheckCollisionPointRec(mouse, l.p2)) {
+          game.createHostIsP1 = false;
+          return;
+        }
+        if (CheckCollisionPointRec(mouse, l.showPwd)) {
+          game.showPwd = !game.showPwd;
+          return;
+        }
+        if (CheckCollisionPointRec(mouse, l.nameBox)) {
+          game.createDlgFocus = 0;
+          game.createNameCursor = TextCursorFromMouseX(
+              game.font, game.createRoomName, mouse.x, l.nameBox.x + 10.0f * l.scale,
+              21.0f * l.scale);
+          return;
+        }
+        if (CheckCollisionPointRec(mouse, l.pwdBox)) {
+          game.createDlgFocus = 1;
+          std::string display =
+              game.showPwd ? game.createRoomPwd : std::string(game.createRoomPwd.size(), '*');
+          game.createPwdCursor = TextCursorFromMouseX(
+              game.font, display, mouse.x, l.pwdBox.x + 10.0f * l.scale,
+              21.0f * l.scale);
+          return;
+        }
+        return;
+      }
+      if (!game.showJoinPwdDlg && CheckCollisionPointRec(mouse, createBtn)) {
+        ResetCreateRoomDialog(game);
+        return;
+      }
+      if (!game.showJoinPwdDlg && CheckCollisionPointRec(mouse, refreshBtn)) {
+        game.client.Stop();
+        game.client.Start();
+        game.roomList.clear();
+        return;
+      }
+      if (game.showJoinPwdDlg) {
+        const float us2 = OnlineUiScale();
+        const float cw2 = 360.0f * us2, ch2 = 170.0f * us2;
+        const float cx2 = sw * 0.5f - cw2 * 0.5f;
+        const float cy2 = sh * 0.5f - ch2 * 0.5f;
+        Rectangle okR2{cx2 + cw2 * 0.5f - 82.0f * us2, cy2 + ch2 - 48.0f * us2,
+                       74.0f * us2, 32.0f * us2};
+        Rectangle cancelR2{cx2 + cw2 * 0.5f + 10.0f * us2, okR2.y,
+                           74.0f * us2, 32.0f * us2};
+        if (CheckCollisionPointRec(mouse, okR2)) {
+          game.client.Stop(); game.client.Start();
+          if (game.client.Connect(game.pendingJoinHostIP, game.joinPwdInput)) {
+            game.appMode = AppMode::RoomClient;
+            game.roomName = game.pendingJoinRoomName;
+            game.amReady = false;
+            game.opReady = false;
+            game.chatHistory.clear();
+          }
+          CloseJoinPasswordDialog(game);
+          return;
+        }
+        if (CheckCollisionPointRec(mouse, cancelR2)) {
+          CloseJoinPasswordDialog(game);
+          return;
+        }
+        Rectangle pwdBox3{cx2 + 20.0f * us2, cy2 + 62.0f * us2,
+                          cw2 - 40.0f * us2, 34.0f * us2};
+        if (CheckCollisionPointRec(mouse, pwdBox3)) {
+          std::string display = std::string(game.joinPwdInput.size(), '*');
+          game.joinPwdCursor =
+              TextCursorFromMouseX(game.font, display, mouse.x, cx2 + 30.0f * us2,
+                                   20.0f * us2);
+          game.textAllSelected = false;
+        }
+        return;
+      }
       if (CheckCollisionPointRec(mouse, createBtn)) {
-        game.showCreateDlg = true;
-        game.createDlgFocus = 0;
-        game.createRoomName = "我的房间";
-        game.createRoomPwd.clear();
-        game.showPwd = false;
-        game.createHostIsP1 = true;
+        ResetCreateRoomDialog(game);
       } else if (CheckCollisionPointRec(mouse, refreshBtn)) {
+        game.client.Stop();
+        game.client.Start();
         game.roomList.clear();
       } else if (game.showCreateDlg) {
         float cw = 360.0f, ch = 280.0f, cx = sw * 0.5f - cw * 0.5f, cy = sh * 0.5f - ch * 0.5f;
@@ -1597,6 +2182,7 @@ void UpdateGame(Game &game, const View &view) {
           }
           game.showCreateDlg = false;
         } else if (CheckCollisionPointRec(mouse, cancelR)) {
+          game.host.Stop();
           game.showCreateDlg = false;
         } else if (CheckCollisionPointRec(mouse, p1R)) {
           game.createHostIsP1 = true;
@@ -1616,10 +2202,7 @@ void UpdateGame(Game &game, const View &view) {
           Rectangle joinBtn{row.x + row.width - 70, row.y + 8, 56, 28};
           if (CheckCollisionPointRec(mouse, joinBtn)) {
             if (game.roomList[i].hasPassword) {
-              game.joinPwdInput.clear();
-              game.showCreateDlg = true;  // reuse as join pwd dialog, flag handled below
-              game.roomName = game.roomList[i].name;
-              game.roomPassword = game.roomList[i].hostIP; // stash IP here
+              OpenJoinPasswordDialog(game, game.roomList[i]);
               game.roomList.clear(); // will re-poll
             } else {
               game.client.Stop(); game.client.Start();
@@ -1660,100 +2243,190 @@ void UpdateGame(Game &game, const View &view) {
       }
       int key = GetCharPressed();
       while (key > 0) {
-        if (game.createDlgFocus == 0 && key >= 32 &&
-            static_cast<int>(game.createRoomName.size()) < 30) {
-          TextInsertAt(game.createRoomName, game.createNameCursor, key);
+        if (game.textAllSelected) {
+          std::string &selectedText =
+              game.createDlgFocus == 0 ? game.createRoomName : game.createRoomPwd;
+          int &selectedCursor =
+              game.createDlgFocus == 0 ? game.createNameCursor : game.createPwdCursor;
+          selectedText.clear();
+          selectedCursor = 0;
+          game.textAllSelected = false;
+        }
+        if (game.createDlgFocus == 0 && key >= 32) {
+          if (Utf8CodepointCount(game.createRoomName) < kMaxRoomNameChars) {
+            TextInsertAt(game.createRoomName, game.createNameCursor, key);
+            game.createRoomNotice.clear();
+          } else {
+            game.createRoomNotice = "房间名最多 24 个字符";
+          }
         } else if (game.createDlgFocus == 1 && key > 0 &&
-                   static_cast<int>(game.createRoomPwd.size()) < 20) {
+                   Utf8CodepointCount(game.createRoomPwd) < kMaxRoomPasswordChars) {
           TextInsertAt(game.createRoomPwd, game.createPwdCursor, key);
         }
         key = GetCharPressed();
       }
       int &cursor = game.createDlgFocus == 0 ? game.createNameCursor : game.createPwdCursor;
       std::string &text = game.createDlgFocus == 0 ? game.createRoomName : game.createRoomPwd;
-      if (IsKeyPressed(KEY_LEFT)) cursor = Utf8PrevPos(text, cursor);
-      if (IsKeyPressed(KEY_RIGHT)) cursor = Utf8NextPos(text, cursor);
-      if (IsKeyPressed(KEY_HOME)) cursor = 0;
-      if (IsKeyPressed(KEY_END)) cursor = static_cast<int>(text.size());
-      if (IsKeyPressed(KEY_DELETE) && cursor < static_cast<int>(text.size()))
-        TextEraseAfter(text, cursor);
-      bool ctrl = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
-      if (ctrl && IsKeyPressed(KEY_A)) cursor = static_cast<int>(text.size());
-      double now = GetTime();
-      if (IsKeyPressed(KEY_BACKSPACE) && cursor > 0) {
-        TextEraseBefore(text, cursor);
+      const double now = GetTime();
+      if (game.leftRepeat.tick(IsKeyDown(KEY_LEFT), now)) {
+        if (game.textAllSelected) {
+          cursor = 0;
+          game.textAllSelected = false;
+        } else {
+          cursor = Utf8PrevPos(text, cursor);
+        }
       }
-      if (game.bsRepeat.tick(IsKeyDown(KEY_BACKSPACE), now) && cursor > 0) {
-        TextEraseBefore(text, cursor);
+      if (game.rightRepeat.tick(IsKeyDown(KEY_RIGHT), now)) {
+        if (game.textAllSelected) {
+          cursor = static_cast<int>(text.size());
+          game.textAllSelected = false;
+        } else {
+          cursor = Utf8NextPos(text, cursor);
+        }
+      }
+      if (IsKeyPressed(KEY_HOME)) { cursor = 0; game.textAllSelected = false; }
+      if (IsKeyPressed(KEY_END)) { cursor = static_cast<int>(text.size()); game.textAllSelected = false; }
+      if (game.delRepeat.tick(IsKeyDown(KEY_DELETE), now)) {
+        if (game.textAllSelected) {
+          text.clear();
+          cursor = 0;
+          game.textAllSelected = false;
+        } else if (cursor < static_cast<int>(text.size())) {
+          TextEraseAfter(text, cursor);
+        }
+      }
+      bool ctrl = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
+      if (ctrl && IsKeyPressed(KEY_A) && !text.empty()) {
+        cursor = static_cast<int>(text.size());
+        game.textAllSelected = true;
+      }
+      if (game.bsRepeat.tick(IsKeyDown(KEY_BACKSPACE), now)) {
+        if (game.textAllSelected) {
+          text.clear();
+          cursor = 0;
+          game.textAllSelected = false;
+        } else if (cursor > 0) {
+          TextEraseBefore(text, cursor);
+        }
       }
       // Tab to switch focus
       if (IsKeyPressed(KEY_TAB)) {
         game.createDlgFocus = 1 - game.createDlgFocus;
+        game.textAllSelected = false;
       }
     }
     // Handle join password dialog (also shown in lobby)
-    if (!game.roomPassword.empty() && game.showCreateDlg && game.appMode == AppMode::Lobby) {
+    if (game.showJoinPwdDlg && game.appMode == AppMode::Lobby) {
       // This is actually the join password dialog
       float sw2 = static_cast<float>(GetScreenWidth()), sh2 = static_cast<float>(GetScreenHeight());
-      float cw2 = 280.0f, ch2 = 140.0f, cx2 = sw2 * 0.5f - cw2 * 0.5f, cy2 = sh2 * 0.5f - ch2 * 0.5f;
-      Rectangle okR2{cx2 + cw2 * 0.5f - 70, cy2 + ch2 - 34, 64, 24};
-      Rectangle cancelR2{cx2 + cw2 * 0.5f + 6, cy2 + ch2 - 34, 64, 24};
+      float us2 = OnlineUiScale();
+      float cw2 = 360.0f * us2, ch2 = 170.0f * us2, cx2 = sw2 * 0.5f - cw2 * 0.5f, cy2 = sh2 * 0.5f - ch2 * 0.5f;
+      Rectangle okR2{cx2 + cw2 * 0.5f - 82.0f * us2, cy2 + ch2 - 48.0f * us2,
+                     74.0f * us2, 32.0f * us2};
+      Rectangle cancelR2{cx2 + cw2 * 0.5f + 10.0f * us2, okR2.y,
+                         74.0f * us2, 32.0f * us2};
       Vector2 mouse = GetMousePosition();
       if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
         if (CheckCollisionPointRec(mouse, okR2)) {
           game.client.Stop(); game.client.Start();
-          if (game.client.Connect(game.roomPassword, game.joinPwdInput)) {
+          if (game.client.Connect(game.pendingJoinHostIP, game.joinPwdInput)) {
             game.appMode = AppMode::RoomClient;
+            game.roomName = game.pendingJoinRoomName;
             game.amReady = false;
             game.opReady = false;
             game.chatHistory.clear();
           }
-          game.showCreateDlg = false;
-          game.roomPassword.clear();
+          CloseJoinPasswordDialog(game);
         } else if (CheckCollisionPointRec(mouse, cancelR2)) {
-          game.showCreateDlg = false;
-          game.roomPassword.clear();
+          CloseJoinPasswordDialog(game);
         } else {
-          Rectangle pwdBox3{cx2 + 16, cy2 + 44, cw2 - 32, 28};
+          Rectangle pwdBox3{cx2 + 20.0f * us2, cy2 + 62.0f * us2,
+                            cw2 - 40.0f * us2, 34.0f * us2};
           if (CheckCollisionPointRec(mouse, pwdBox3)) {
             std::string display = std::string(game.joinPwdInput.size(), '*');
-            game.joinPwdCursor = TextCursorFromMouseX(game.font, display, mouse.x, cx2 + 22, 18.0f);
+            game.joinPwdCursor = TextCursorFromMouseX(game.font, display, mouse.x,
+                                                      cx2 + 30.0f * us2, 20.0f * us2);
+            game.textAllSelected = false;
           }
         }
       }
       int key2 = GetCharPressed();
       while (key2 > 0) {
+        if (game.textAllSelected) {
+          game.joinPwdInput.clear();
+          game.joinPwdCursor = 0;
+          game.textAllSelected = false;
+        }
         if (key2 >= 32 && key2 <= 126 && static_cast<int>(game.joinPwdInput.size()) < 20)
           TextInsertAt(game.joinPwdInput, game.joinPwdCursor, key2);
         key2 = GetCharPressed();
       }
-      if (IsKeyPressed(KEY_LEFT))
-        game.joinPwdCursor = Utf8PrevPos(game.joinPwdInput, game.joinPwdCursor);
-      if (IsKeyPressed(KEY_RIGHT))
-        game.joinPwdCursor = Utf8NextPos(game.joinPwdInput, game.joinPwdCursor);
-      if (IsKeyPressed(KEY_HOME)) game.joinPwdCursor = 0;
-      if (IsKeyPressed(KEY_END))
-        game.joinPwdCursor = static_cast<int>(game.joinPwdInput.size());
-      if (IsKeyPressed(KEY_DELETE) && game.joinPwdCursor < static_cast<int>(game.joinPwdInput.size()))
-        TextEraseAfter(game.joinPwdInput, game.joinPwdCursor);
-      bool ctrl2 = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
-      if (ctrl2 && IsKeyPressed(KEY_A))
-        game.joinPwdCursor = static_cast<int>(game.joinPwdInput.size());
       double now2 = GetTime();
-      if (game.bsRepeat.tick(IsKeyDown(KEY_BACKSPACE), now2) && game.joinPwdCursor > 0) {
-        TextEraseBefore(game.joinPwdInput, game.joinPwdCursor);
+      if (game.leftRepeat.tick(IsKeyDown(KEY_LEFT), now2)) {
+        if (game.textAllSelected) {
+          game.joinPwdCursor = 0;
+          game.textAllSelected = false;
+        } else {
+          game.joinPwdCursor = Utf8PrevPos(game.joinPwdInput, game.joinPwdCursor);
+        }
+      }
+      if (game.rightRepeat.tick(IsKeyDown(KEY_RIGHT), now2)) {
+        if (game.textAllSelected) {
+          game.joinPwdCursor = static_cast<int>(game.joinPwdInput.size());
+          game.textAllSelected = false;
+        } else {
+          game.joinPwdCursor = Utf8NextPos(game.joinPwdInput, game.joinPwdCursor);
+        }
+      }
+      if (IsKeyPressed(KEY_HOME)) { game.joinPwdCursor = 0; game.textAllSelected = false; }
+      if (IsKeyPressed(KEY_END)) { game.joinPwdCursor = static_cast<int>(game.joinPwdInput.size()); game.textAllSelected = false; }
+      if (game.delRepeat.tick(IsKeyDown(KEY_DELETE), now2)) {
+        if (game.textAllSelected) {
+          game.joinPwdInput.clear();
+          game.joinPwdCursor = 0;
+          game.textAllSelected = false;
+        } else if (game.joinPwdCursor < static_cast<int>(game.joinPwdInput.size())) {
+          TextEraseAfter(game.joinPwdInput, game.joinPwdCursor);
+        }
+      }
+      bool ctrl2 = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
+      if (ctrl2 && IsKeyPressed(KEY_A) && !game.joinPwdInput.empty()) {
+        game.joinPwdCursor = static_cast<int>(game.joinPwdInput.size());
+        game.textAllSelected = true;
+      }
+      if (game.bsRepeat.tick(IsKeyDown(KEY_BACKSPACE), now2)) {
+        if (game.textAllSelected) {
+          game.joinPwdInput.clear();
+          game.joinPwdCursor = 0;
+          game.textAllSelected = false;
+        } else if (game.joinPwdCursor > 0) {
+          TextEraseBefore(game.joinPwdInput, game.joinPwdCursor);
+        }
       }
     }
     return;
   }
   if (game.appMode == AppMode::RoomHost) {
     game.host.Poll();
-    // Handle client ready/unready
-    if (game.host.HasReady()) { game.opReady = true; }
-    if (game.host.HasUnready()) { game.opReady = false; }
+    auto syncHostReadyToClient = [&]() {
+      if (game.amReady) game.host.SendReady();
+      else game.host.SendUnready();
+    };
+    if (game.host.HasJoinRequest(nullptr)) {
+      game.opReady = false;
+      syncHostReadyToClient();
+    }
+    if (game.host.HasReady()) {
+      game.opReady = true;
+      syncHostReadyToClient();
+    }
+    if (game.host.HasUnready()) {
+      game.opReady = false;
+      syncHostReadyToClient();
+    }
     if (game.host.HasChat(nullptr)) {
       std::string msg; game.host.HasChat(&msg);
-      game.chatHistory.push_back("我: " + msg);
+      game.chatHistory.push_back("对手: " + msg);
     }
     if (game.host.HasBye() || game.host.ClientDisconnected()) {
       game.opReady = false;
@@ -1819,6 +2492,7 @@ void UpdateGame(Game &game, const View &view) {
       game.client.Stop(); game.client.Start();
       game.appMode = AppMode::Lobby;
       game.showCreateDlg = false;
+      game.showJoinPwdDlg = false;
       game.roomPassword.clear();
       game.assignedPlayer = -1;
       return;
@@ -1831,9 +2505,7 @@ void UpdateGame(Game &game, const View &view) {
       game.world.ResetRack();
       // Apply synced positions to world
       if (game.syncedBalls[0].pos.x != 0.0 || game.syncedBalls[0].pos.y != 0.0) {
-        for (int i = 0; i < 16; ++i) {
-          game.world.Balls()[i].pos = game.syncedBalls[i].pos;
-        }
+        ApplySyncedBalls(game);
       }
       game.phase = Phase::Aiming;
       game.appMode = AppMode::PlayingOnline;
@@ -1860,7 +2532,7 @@ void UpdateGame(Game &game, const View &view) {
       if (game.host.HasBye() || game.host.ClientDisconnected()) {
         game.appMode = AppMode::RoomHost; game.amReady = false; game.opReady = false; game.chatHistory.clear(); return;
       }
-      if (game.host.HasChat(nullptr)) { std::string m; game.host.HasChat(&m); game.chatHistory.push_back("我: " + m); }
+      if (game.host.HasChat(nullptr)) { std::string m; game.host.HasChat(&m); game.chatHistory.push_back("对手: " + m); }
       if (game.host.HasAim(nullptr, nullptr, nullptr, nullptr, nullptr)) { game.host.HasAim(&game.opAimTipX, &game.opAimTipY, &game.opPower, &game.opAimX, &game.opAimY); }
     } else {
       if (game.client.HasBye() || game.client.Disconnected()) {
@@ -1868,6 +2540,14 @@ void UpdateGame(Game &game, const View &view) {
       }
       if (game.client.HasChat(nullptr)) { std::string m; game.client.HasChat(&m); game.chatHistory.push_back("对手: " + m); }
       if (game.client.HasAim(nullptr, nullptr, nullptr, nullptr, nullptr)) { game.client.HasAim(&game.opAimTipX, &game.opAimTipY, &game.opPower, &game.opAimX, &game.opAimY); }
+    }
+    if (!amHost && game.client.HasTurn(nullptr)) {
+      int turn;
+      game.client.HasTurn(&turn);
+      game.rules.State().currentPlayer = turn;
+      if (game.phase == Phase::Moving) {
+        game.phase = Phase::Aiming;
+      }
     }
     bool isMyTurn = (game.rules.State().currentPlayer == game.onlineTurn);
     bool isOpponentTurn = !isMyTurn;
@@ -1887,7 +2567,9 @@ void UpdateGame(Game &game, const View &view) {
         game.phase = Phase::Moving;
         game.power = 0.0;
         if (amHost) {
-          // host will compute physics and send positions
+          game.host.SendShot(game.tipX, game.tipY, shot.power, game.aim.x, game.aim.y);
+          game.host.SendPositions(game.world.Balls());
+          game.syncedBalls = game.world.Balls();
         } else {
           game.client.SendShot(game.tipX, game.tipY, shot.power, game.aim.x, game.aim.y);
         }
@@ -1979,13 +2661,7 @@ void UpdateGame(Game &game, const View &view) {
       }
       // Override world ball positions with synced data when not actively computing physics
       if (!isMyTurn || game.phase != Phase::Moving) {
-        for (int i = 0; i < 16; ++i) {
-          game.world.Balls()[i].pos = game.syncedBalls[i].pos;
-          game.world.Balls()[i].pocketed = game.syncedBalls[i].pocketed;
-          if (game.syncedBalls[i].pocketed) {
-            game.world.Balls()[i].sinking = false;
-          }
-        }
+        ApplySyncedBalls(game);
       }
     }
     // Handle turn messages for client
@@ -2055,12 +2731,11 @@ void UpdateGame(Game &game, const View &view) {
 void DrawGame(Game &game, const View &view) {
   if (game.appMode == AppMode::Lobby) {
     DrawLobby(game);
-    if (game.showCreateDlg) {
+    if (game.showCreateDlg || game.showJoinPwdDlg) {
       DrawBackdrop();
-      // Check if this is a create dialog or join password dialog
-      if (!game.roomPassword.empty() && game.appMode == AppMode::Lobby) {
+      if (game.showJoinPwdDlg) {
         DrawJoinPasswordDialog(game);
-      } else {
+      } else if (game.showCreateDlg) {
         DrawCreateRoomDialog(game);
       }
     }
@@ -2071,8 +2746,6 @@ void DrawGame(Game &game, const View &view) {
     return;
   }
   ClearBackground(BLACK);
-  DrawTopStatus(game);
-  DrawFpsCounter(game.font);
   DrawTable(view);
   DrawPockets(view);
   for (const Ball &ball : game.world.Balls()) {
@@ -2114,6 +2787,8 @@ void DrawGame(Game &game, const View &view) {
     DrawCueAndAim(game, view);
     DrawCueShadow(game, view);
   }
+  DrawTopStatus(game);
+  DrawFpsCounter(game.font);
   if (game.phase == Phase::BallInHand) {
     const Vector2 p = WorldToScreen(view, game.world.CueBall().pos);
     DrawCircleLines(static_cast<int>(p.x), static_cast<int>(p.y),
@@ -2129,7 +2804,8 @@ void DrawGame(Game &game, const View &view) {
                 static_cast<float>(GetScreenHeight()) * 0.5f - 45.0f, 380.0f, 90.0f};
     DrawRoundedFillWithBorder(r, 0.05f, 12, {11, 12, 12, 240},
                               {70, 82, 76, 210});
-    DrawTextF(game.font, game.rules.State().message.c_str(), {r.x + 35, r.y + 15}, 28,
+    const std::string rackMessage = LocalStatusMessage(game);
+    DrawTextF(game.font, rackMessage.c_str(), {r.x + 35, r.y + 15}, 28,
               {236, 238, 228, 255});
     DrawTextF(game.font, "按空格开始新一局", {r.x + 63, r.y + 52}, 22,
               {180, 190, 182, 255});
@@ -2172,12 +2848,27 @@ int main(int argc, char **argv) {
   if (!game.customFont) {
     game.font = GetFontDefault();
   }
+  game.splashStartTime = GetTime();
   while (!WindowShouldClose() && !game.requestClose) {
     const View view = MakeView(GetScreenWidth(), GetScreenHeight());
-    UpdateGame(game, view);
+    if (SplashActive(game)) {
+      if (SplashSkipPressed()) {
+        game.splashDone = true;
+      }
+    } else {
+      game.splashDone = true;
+      UpdateGame(game, view);
+    }
     BeginDrawing();
-    DrawGame(game, view);
+    if (!game.splashDone) {
+      DrawHealthSplash(game);
+    } else {
+      DrawGame(game, view);
+    }
     EndDrawing();
+  }
+  if (game.splashTexture.texture.id != 0) {
+    UnloadRenderTexture(game.splashTexture);
   }
   if (game.customFont) {
     UnloadFont(game.font);

@@ -46,6 +46,7 @@ target_link_libraries(heyball PRIVATE
   "${MSYS2_UCRT64}/lib/libraylib.a"
   "${MSYS2_UCRT64}/lib/libglfw3.dll.a"
   -lgdi32
+  -luser32
   -lwinmm
   -lopengl32
   -lkernel32
