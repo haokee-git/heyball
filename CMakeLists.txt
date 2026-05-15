@@ -35,7 +35,9 @@ target_compile_options(heyball_core PRIVATE -Wall -Wextra -Wpedantic -finput-cha
 
 add_executable(heyball
   src/main.cpp
+  src/async_runtime.cpp
   src/network.cpp
+  src/text_utils.cpp
 )
 if(WIN32)
   set_target_properties(heyball PROPERTIES WIN32_EXECUTABLE TRUE)

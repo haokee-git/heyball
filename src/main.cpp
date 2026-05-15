@@ -1,5 +1,7 @@
 #include "core.hpp"
 #include "network.hpp"
+#include "async_runtime.hpp"
+#include "text_utils.hpp"
 #include <raylib.h>
 #include <raymath.h>
 #include <algorithm>
@@ -18,9 +20,6 @@ struct HeyballWinPoint {
 };
 extern "C" __declspec(dllimport) int __stdcall GetCursorPos(HeyballWinPoint *point);
 extern "C" __declspec(dllimport) short __stdcall GetAsyncKeyState(int key);
-extern "C" __declspec(dllimport) int __stdcall MultiByteToWideChar(
-    unsigned int codePage, unsigned long flags, const char *multiByteStr,
-    int multiByteCount, wchar_t *wideCharStr, int wideCharCount);
 extern "C" __declspec(dllimport) int __stdcall SetWindowPos(void *hwnd, void *insertAfter,
                                                            int x, int y, int cx, int cy,
                                                            unsigned int flags);
@@ -33,176 +32,16 @@ using hb::ShotEvents;
 using hb::ShotParams;
 using hb::Vec2;
 constexpr int kUiFontSize = 96;
-void Utf8PopBack(std::string &s) {
-  if (s.empty()) return;
-  size_t i = s.size() - 1;
-  while (i > 0 && (s[i] & 0xC0) == 0x80) --i;
-  s.resize(i);
-}
-std::vector<int> BuildFontCodepoints() {
-  std::vector<int> codepoints;
-  auto addRange = [&](int first, int last) {
-    for (int c = first; c <= last; ++c) codepoints.push_back(c);
-  };
-  addRange(32, 126);
-  addRange(161, 255);
-  addRange(256, 383);
-  addRange(0x2000, 0x206F);
-  addRange(0x2100, 0x214F);
-  addRange(0x2190, 0x21FF);
-  addRange(0x2460, 0x24FF);
-  addRange(0x25A0, 0x25FF);
-  addRange(0x3000, 0x303F);
-  addRange(0xFE10, 0xFE1F);
-  addRange(0xFE30, 0xFE4F);
-  addRange(0xFF00, 0xFFEF);
-#ifdef _WIN32
-  constexpr unsigned int kGbCodePage = 936;
-  constexpr unsigned long kErrInvalidChars = 0x00000008;
-  for (int high = 0xA1; high <= 0xF7; ++high) {
-    for (int low = 0xA1; low <= 0xFE; ++low) {
-      const char bytes[2] = {static_cast<char>(high), static_cast<char>(low)};
-      wchar_t wide[2]{};
-      if (MultiByteToWideChar(kGbCodePage, kErrInvalidChars, bytes, 2, wide, 2) == 1) {
-        codepoints.push_back(static_cast<int>(wide[0]));
-      }
-    }
-  }
-#else
-  addRange(0x4E00, 0x9FFF);
-#endif
-  std::sort(codepoints.begin(), codepoints.end());
-  codepoints.erase(std::unique(codepoints.begin(), codepoints.end()), codepoints.end());
-  return codepoints;
-}
-void AppendUtf8(std::string &s, int codepoint) {
-  if (codepoint < 0x80) {
-    s += static_cast<char>(codepoint);
-  } else if (codepoint < 0x800) {
-    s += static_cast<char>(0xC0 | (codepoint >> 6));
-    s += static_cast<char>(0x80 | (codepoint & 0x3F));
-  } else if (codepoint < 0x10000) {
-    s += static_cast<char>(0xE0 | (codepoint >> 12));
-    s += static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
-    s += static_cast<char>(0x80 | (codepoint & 0x3F));
-  } else if (codepoint < 0x110000) {
-    s += static_cast<char>(0xF0 | (codepoint >> 18));
-    s += static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F));
-    s += static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
-    s += static_cast<char>(0x80 | (codepoint & 0x3F));
-  }
-}
-int Utf8PrevPos(const std::string &s, int pos) {
-  if (pos <= 0 || s.empty()) return 0;
-  size_t i = static_cast<size_t>(pos);
-  do { --i; } while (i > 0 && (s[i] & 0xC0) == 0x80);
-  return static_cast<int>(i);
-}
-int Utf8NextPos(const std::string &s, int pos) {
-  if (pos < 0 || static_cast<size_t>(pos) >= s.size()) return static_cast<int>(s.size());
-  size_t i = static_cast<size_t>(pos);
-  if ((s[i] & 0x80) == 0) return static_cast<int>(i + 1);
-  size_t len = s.size();
-  if ((s[i] & 0xE0) == 0xC0) { if (i + 1 < len) return static_cast<int>(i + 2); }
-  else if ((s[i] & 0xF0) == 0xE0) { if (i + 2 < len) return static_cast<int>(i + 3); }
-  else if ((s[i] & 0xF8) == 0xF0) { if (i + 3 < len) return static_cast<int>(i + 4); }
-  return static_cast<int>(i + 1);
-}
-int Utf8CodepointCount(const std::string &s) {
-  int count = 0;
-  for (int i = 0; i < static_cast<int>(s.size()); i = Utf8NextPos(s, i)) {
-    ++count;
-  }
-  return count;
-}
-void TextInsertAt(std::string &s, int &cursor, int codepoint) {
-  if (codepoint < 0x80) {
-    s.insert(static_cast<size_t>(cursor), 1, static_cast<char>(codepoint));
-    ++cursor;
-  } else if (codepoint < 0x800) {
-    s.insert(static_cast<size_t>(cursor), 1, static_cast<char>(0xC0 | (codepoint >> 6)));
-    s.insert(static_cast<size_t>(cursor) + 1, 1, static_cast<char>(0x80 | (codepoint & 0x3F)));
-    cursor += 2;
-  } else if (codepoint < 0x10000) {
-    s.insert(static_cast<size_t>(cursor), 1, static_cast<char>(0xE0 | (codepoint >> 12)));
-    s.insert(static_cast<size_t>(cursor) + 1, 1, static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
-    s.insert(static_cast<size_t>(cursor) + 2, 1, static_cast<char>(0x80 | (codepoint & 0x3F)));
-    cursor += 3;
-  } else if (codepoint < 0x110000) {
-    s.insert(static_cast<size_t>(cursor), 1, static_cast<char>(0xF0 | (codepoint >> 18)));
-    s.insert(static_cast<size_t>(cursor) + 1, 1, static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F)));
-    s.insert(static_cast<size_t>(cursor) + 2, 1, static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
-    s.insert(static_cast<size_t>(cursor) + 3, 1, static_cast<char>(0x80 | (codepoint & 0x3F)));
-    cursor += 4;
-  }
-}
-void TextEraseBefore(std::string &s, int &cursor) {
-  if (cursor <= 0) return;
-  int prev = Utf8PrevPos(s, cursor);
-  s.erase(static_cast<size_t>(prev), static_cast<size_t>(cursor - prev));
-  cursor = prev;
-}
-void TextEraseAfter(std::string &s, int &cursor) {
-  if (cursor >= static_cast<int>(s.size())) return;
-  int next = Utf8NextPos(s, cursor);
-  s.erase(static_cast<size_t>(cursor), static_cast<size_t>(next - cursor));
-}
-int TextCursorFromMouseX(Font font, const std::string &text, float mouseX, float textX, float fontSize) {
-  float relX = mouseX - textX;
-  if (relX <= 0) return 0;
-  float totalW = 0;
-  int cursor = 0;
-  while (cursor < static_cast<int>(text.size())) {
-    int next = Utf8NextPos(text, cursor);
-    std::string ch = text.substr(static_cast<size_t>(cursor), static_cast<size_t>(next - cursor));
-    float w = MeasureTextEx(font, ch.c_str(), fontSize, 0.0f).x;
-    if (totalW + w * 0.5f > relX) return cursor;
-    totalW += w;
-    cursor = next;
-  }
-  return static_cast<int>(text.size());
-}
-struct BackspaceRepeat {
-  bool wasDown = false;
-  double pressTime = 0.0;
-  double lastRepeat = 0.0;
-  bool repeating = false;
-  // Returns true when one character should be deleted this frame.
-  bool tick(bool down, double now) {
-    if (down) {
-      if (!wasDown) {
-        wasDown = true;
-        pressTime = now;
-        lastRepeat = now;
-        repeating = false;
-        return true;
-      }
-      if (!repeating) {
-        if (now - pressTime >= 0.42) {
-          repeating = true;
-          lastRepeat = now;
-          return true;
-        }
-      } else {
-        if (now - lastRepeat >= 0.055) {
-          lastRepeat = now;
-          return true;
-        }
-      }
-    } else {
-      wasDown = false;
-    }
-    return false;
-  }
-};
 struct View {
   Rectangle play{};
   double scale = 1.0;
   float uiScale = 1.0f;
 };
 enum class AppMode { Single, Lobby, RoomHost, RoomClient, PlayingOnline };
+
 struct Game {
   hb::PhysicsWorld world;
+  PhysicsRunner physics;
   hb::RulesEngine rules;
   Phase phase = Phase::Aiming;
   ShotEvents shotEvents;
@@ -231,8 +70,8 @@ struct Game {
   double savedPower = 0.0;
   // Network
   AppMode appMode = AppMode::Single;
-  hb::NetworkHost host;
-  hb::NetworkClient client;
+  AsyncNetworkHost host;
+  AsyncNetworkClient client;
   std::vector<hb::RoomInfo> roomList;
   std::string roomName;
   std::string roomPassword;
@@ -264,6 +103,7 @@ struct Game {
   int joinPwdCursor = 0;
   bool showPwd = false;
   int onlineTurn = -1;  // 0 or 1, who plays on this machine (host perspective)
+  bool onlineHost = false;
   int assignedPlayer = -1;  // received from host via ASSIGN message
   std::array<hb::Ball, 16> syncedBalls{};
   double opAimTipX = 0.0, opAimTipY = 0.0, opPower = 0.0, opAimX = 1.0, opAimY = 0.0;
@@ -950,7 +790,17 @@ std::string LocalStatusMessage(const Game &game) {
   }
   return msg;
 }
+void StartPhysicsShot(Game &game, const ShotParams &shot) {
+  game.physics.Begin(game.world, &shot);
+  game.physics.Snapshot(&game.world, &game.shotEvents);
+}
+bool SyncPhysics(Game &game) {
+  bool finished = false;
+  game.physics.Snapshot(&game.world, &game.shotEvents, &finished);
+  return finished;
+}
 void ApplySyncedBalls(Game &game) {
+  game.physics.Stop();
   for (int i = 0; i < 16; ++i) {
     Ball &dst = game.world.Balls()[i];
     const Ball &src = game.syncedBalls[i];
@@ -1823,6 +1673,7 @@ bool HandleTitleBarInput(Game &game) {
     }
     if (PointInRect(mouse, netR)) {
       if (game.appMode == AppMode::Single) {
+        SyncPhysics(game);
         game.savedWorld = game.world;
         game.savedRules = game.rules;
         game.savedPhase = game.phase;
@@ -1836,9 +1687,11 @@ bool HandleTitleBarInput(Game &game) {
         game.host.Stop();
         game.client.Start();
       } else {
+        game.physics.Stop();
         game.client.Stop();
         game.host.Stop();
         game.appMode = AppMode::Single;
+        game.onlineHost = false;
         game.world = game.savedWorld;
         game.rules = game.savedRules;
         game.phase = game.savedPhase;
@@ -1922,6 +1775,7 @@ bool HandleUiInput(Game &game) {
       return true;
     }
     if (PointInRect(mouse, {panel.x + 18 * s, panel.y + 354 * s, 188 * s, 30 * s})) {
+      game.physics.Stop();
       game.world.ResetRack();
       game.rules.ResetRack(1 - game.rules.State().currentPlayer);
       game.phase = Phase::Aiming;
@@ -1954,7 +1808,7 @@ void UpdateGame(Game &game, const View &view) {
       game.textAllSelected = false;
     } else if (!game.chatInputBuf.empty()) {
       if (game.appMode == AppMode::PlayingOnline) {
-        if (game.host.HasClient()) game.host.SendChat(game.chatInputBuf);
+        if (game.onlineHost) game.host.SendChat(game.chatInputBuf);
         else game.client.SendChat(game.chatInputBuf);
         game.chatHistory.push_back("我: " + game.chatInputBuf);
       } else if (game.appMode == AppMode::RoomHost) {
@@ -2439,11 +2293,13 @@ void UpdateGame(Game &game, const View &view) {
     if (game.amReady && game.opReady) {
       int clientPlayer = game.hostIsPlayer1 ? 1 : 0;
       game.host.SendAssign(clientPlayer);
+      game.physics.Stop();
       game.world.ResetRack();
       game.rules.ResetRack(game.hostIsPlayer1 ? 0 : 1);
       game.phase = Phase::Aiming;
       game.onlineTurn = 0;
       if (!game.hostIsPlayer1) game.onlineTurn = 1;
+      game.onlineHost = true;
       game.appMode = AppMode::PlayingOnline;
       game.host.SendTurn(game.rules.State().currentPlayer);
       game.host.SendPositions(game.world.Balls());
@@ -2467,9 +2323,9 @@ void UpdateGame(Game &game, const View &view) {
     if (game.client.HasAssign(nullptr)) {
       game.client.HasAssign(&game.assignedPlayer);
     }
-    if (game.client.HasTurn(nullptr)) {
-      int turn;
-      game.client.HasTurn(&turn);
+    int lobbyTurn = -1;
+    if (game.client.HasTurn(&lobbyTurn)) {
+      int turn = lobbyTurn;
       game.rules.State().currentPlayer = turn;
     }
     if (game.client.HasPositions(nullptr)) {
@@ -2502,6 +2358,8 @@ void UpdateGame(Game &game, const View &view) {
     }
     if (game.amReady && game.opReady && game.client.IsAccepted() && game.assignedPlayer >= 0) {
       game.onlineTurn = game.assignedPlayer;
+      game.onlineHost = false;
+      game.physics.Stop();
       game.world.ResetRack();
       // Apply synced positions to world
       if (game.syncedBalls[0].pos.x != 0.0 || game.syncedBalls[0].pos.y != 0.0) {
@@ -2525,7 +2383,7 @@ void UpdateGame(Game &game, const View &view) {
   // Playing Online
   if (game.appMode == AppMode::PlayingOnline) {
     if (HandleTitleBarInput(game)) return;
-    bool amHost = game.host.HasClient();
+    bool amHost = game.onlineHost;
     if (amHost) game.host.Poll(); else game.client.Poll();
     // Handle opponent bye/disconnect
     if (amHost) {
@@ -2541,9 +2399,9 @@ void UpdateGame(Game &game, const View &view) {
       if (game.client.HasChat(nullptr)) { std::string m; game.client.HasChat(&m); game.chatHistory.push_back("对手: " + m); }
       if (game.client.HasAim(nullptr, nullptr, nullptr, nullptr, nullptr)) { game.client.HasAim(&game.opAimTipX, &game.opAimTipY, &game.opPower, &game.opAimX, &game.opAimY); }
     }
-    if (!amHost && game.client.HasTurn(nullptr)) {
-      int turn;
-      game.client.HasTurn(&turn);
+    int onlineTurnMsg = -1;
+    if (!amHost && game.client.HasTurn(&onlineTurnMsg)) {
+      int turn = onlineTurnMsg;
       game.rules.State().currentPlayer = turn;
       if (game.phase == Phase::Moving) {
         game.phase = Phase::Aiming;
@@ -2562,8 +2420,7 @@ void UpdateGame(Game &game, const View &view) {
         game.power = hb::Clamp(game.power + (-wheel) * 0.055, 0.0, 1.0);
       } else if (wheel > 0.0f && game.power > 0.015) {
         ShotParams shot{game.aim, game.power, game.tipX, game.tipY};
-        game.shotEvents.Clear();
-        game.world.StrikeCue(shot);
+        StartPhysicsShot(game, shot);
         game.phase = Phase::Moving;
         game.power = 0.0;
         if (amHost) {
@@ -2584,6 +2441,7 @@ void UpdateGame(Game &game, const View &view) {
     } else if (isMyTurn && game.phase == Phase::BallInHand) {
       Vec2 pos = ClampCuePlacement(ScreenToWorld(view, GetMousePosition()));
       if (game.world.CanPlaceCue(pos)) {
+        game.physics.Stop();
         game.world.PlaceCue(pos);
         if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
           game.rules.State().ballInHand = false;
@@ -2591,8 +2449,8 @@ void UpdateGame(Game &game, const View &view) {
         }
       }
     } else if (isMyTurn && game.phase == Phase::Moving) {
-      game.world.Step(dt, &game.shotEvents);
-      if (!game.world.IsMoving()) {
+      (void)dt;
+      if (SyncPhysics(game)) {
         auto decision = game.rules.ApplyShot(game.shotEvents, game.world);
         game.phase = decision.nextPhase;
         int cp = game.rules.State().currentPlayer;
@@ -2602,11 +2460,13 @@ void UpdateGame(Game &game, const View &view) {
           game.syncedBalls = game.world.Balls();
         }
         if (game.phase == Phase::BallInHand) {
+          game.physics.Stop();
           game.world.PlaceCue({hb::kHeadSpotX, 0.0});
         }
       }
     } else if (isMyTurn && game.phase == Phase::RackOver && !game.chatInputActive && IsKeyPressed(KEY_SPACE)) {
       int nb = game.rules.State().winner >= 0 ? game.rules.State().winner : 0;
+      game.physics.Stop();
       game.world.ResetRack();
       game.rules.ResetRack(nb);
       game.phase = Phase::Aiming;
@@ -2616,15 +2476,14 @@ void UpdateGame(Game &game, const View &view) {
       if (game.host.HasShot(nullptr)) {
         ShotParams opShot;
         game.host.HasShot(&opShot);
-        game.shotEvents.Clear();
-        game.world.StrikeCue(opShot);
+        StartPhysicsShot(game, opShot);
         game.phase = Phase::Moving;
       }
     }
     // Also handle opponent's Moving phase on host
     if (amHost && isOpponentTurn && game.phase == Phase::Moving) {
-      game.world.Step(dt, &game.shotEvents);
-      if (!game.world.IsMoving()) {
+      (void)dt;
+      if (SyncPhysics(game)) {
         auto decision = game.rules.ApplyShot(game.shotEvents, game.world);
         game.phase = decision.nextPhase;
         int cp = game.rules.State().currentPlayer;
@@ -2632,6 +2491,7 @@ void UpdateGame(Game &game, const View &view) {
         game.host.SendPositions(game.world.Balls());
         game.syncedBalls = game.world.Balls();
         if (game.phase == Phase::BallInHand) {
+          game.physics.Stop();
           game.world.PlaceCue({hb::kHeadSpotX, 0.0});
         }
       }
@@ -2641,8 +2501,7 @@ void UpdateGame(Game &game, const View &view) {
       if (game.client.HasShot(nullptr)) {
         ShotParams opShot;
         game.client.HasShot(&opShot);
-        game.shotEvents.Clear();
-        game.world.StrikeCue(opShot);
+        StartPhysicsShot(game, opShot);
         game.phase = Phase::Moving;
       }
     }
@@ -2665,9 +2524,9 @@ void UpdateGame(Game &game, const View &view) {
       }
     }
     // Handle turn messages for client
-    if (!amHost && game.client.HasTurn(nullptr)) {
-      int turn;
-      game.client.HasTurn(&turn);
+    int finalTurnMsg = -1;
+    if (!amHost && game.client.HasTurn(&finalTurnMsg)) {
+      int turn = finalTurnMsg;
       game.rules.State().currentPlayer = turn;
     }
     if (!game.chatInputActive && IsKeyPressed(KEY_C)) { game.tipX = 0.0; game.tipY = 0.0; }
@@ -2694,14 +2553,14 @@ void UpdateGame(Game &game, const View &view) {
       game.power = hb::Clamp(game.power + (-wheel) * 0.055, 0.0, 1.0);
     } else if (wheel > 0.0f && game.power > 0.015) {
       ShotParams shot{game.aim, game.power, game.tipX, game.tipY};
-      game.shotEvents.Clear();
-      game.world.StrikeCue(shot);
+      StartPhysicsShot(game, shot);
       game.phase = Phase::Moving;
       game.power = 0.0;
     }
   } else if (game.phase == Phase::BallInHand) {
     Vec2 pos = ClampCuePlacement(ScreenToWorld(view, GetMousePosition()));
     if (!uiHandled && game.world.CanPlaceCue(pos)) {
+      game.physics.Stop();
       game.world.PlaceCue(pos);
       if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
         game.rules.State().ballInHand = false;
@@ -2709,16 +2568,18 @@ void UpdateGame(Game &game, const View &view) {
       }
     }
   } else if (game.phase == Phase::Moving) {
-    game.world.Step(dt, &game.shotEvents);
-    if (!game.world.IsMoving()) {
+    (void)dt;
+    if (SyncPhysics(game)) {
       auto decision = game.rules.ApplyShot(game.shotEvents, game.world);
       game.phase = decision.nextPhase;
       if (game.phase == Phase::BallInHand) {
+        game.physics.Stop();
         game.world.PlaceCue({hb::kHeadSpotX, 0.0});
       }
     }
   } else if (game.phase == Phase::RackOver && !game.chatInputActive && IsKeyPressed(KEY_SPACE)) {
     const int nextBreaker = game.rules.State().winner >= 0 ? game.rules.State().winner : 0;
+    game.physics.Stop();
     game.world.ResetRack();
     game.rules.ResetRack(nextBreaker);
     game.phase = Phase::Aiming;
