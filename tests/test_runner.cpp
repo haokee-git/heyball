@@ -124,7 +124,7 @@ void TestSidePocketThroatCapturesBall() {
   }
   auto &ball = world.Balls()[8];
   ball.pocketed = false;
-  ball.pos = {hb::kSidePocketMouth * 0.80,
+  ball.pos = {hb::kSidePocketHalfMouth * 0.85,
               hb::kTableHeight * 0.5 - hb::kCushionNoseInset * 1.25};
   ball.vel = {0.0, 0.45};
   hb::ShotEvents events;
@@ -140,7 +140,7 @@ void TestSidePocketDoesNotPullIdleBall() {
   }
   auto &ball = world.Balls()[8];
   ball.pocketed = false;
-  ball.pos = {hb::kSidePocketMouth * 0.80,
+  ball.pos = {hb::kSidePocketHalfMouth * 0.85,
               hb::kTableHeight * 0.5 - hb::kCushionNoseInset * 1.25};
   hb::ShotEvents events;
   world.Step(hb::kFixedStep, &events);

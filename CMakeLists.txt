@@ -16,6 +16,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(HEYBALL_PLAYER_RELEASE_DIR "${CMAKE_SOURCE_DIR}/release" CACHE PATH "Clean player release output directory")
 if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
 endif()
@@ -38,9 +39,15 @@ add_executable(heyball
   src/async_runtime.cpp
   src/network.cpp
   src/text_utils.cpp
+  heyball.rc
 )
 if(WIN32)
   set_target_properties(heyball PROPERTIES WIN32_EXECUTABLE TRUE)
+endif()
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+  set_target_properties(heyball PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${HEYBALL_PLAYER_RELEASE_DIR}"
+  )
 endif()
 target_include_directories(heyball PRIVATE "${MSYS2_UCRT64}/include")
 target_link_libraries(heyball PRIVATE
@@ -66,6 +73,9 @@ add_custom_command(TARGET heyball POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "${CMAKE_SOURCE_DIR}/assets/PingFangSC.otf"
     "$<TARGET_FILE_DIR:heyball>/PingFangSC.otf"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "${CMAKE_SOURCE_DIR}/assets/heyball_icon.png"
+    "$<TARGET_FILE_DIR:heyball>/heyball_icon.png"
 )
 
 add_executable(heyball_tests

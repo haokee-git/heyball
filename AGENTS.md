@@ -16,14 +16,20 @@
 
 ## 当前最新提交
 
-截至 2026-05-15，本地和远端 `main` 最新提交是：
+截至 2026-05-17，`main` 最新一轮更新为联机同步、图标、袋口几何和发布目录清理。最终提交哈希请以 `git log -1 --oneline` 为准。
+
+上一轮已推送的远端提交是：
 
 ```text
-604c00f Split game update and draw flow
+2c5e2c7 Fix online match synchronization
 ```
 
-最近两次重要结构调整：
+最近重要进展：
 
+- `2c5e2c7 Fix online match synchronization`
+  - 修复联机房间创建/取消/改密码/切换先后手后，另一玩家加入但房主仍显示等待的问题。
+  - 修复联机先后手、准备状态、聊天框布局、联机重摆球按钮、加塞同步和状态显示问题。
+  - 修复联机自由球阶段客户端球位同步策略，避免球权方摆放白球时被旧位置覆盖；已记录并继续关注复杂自由球场景下的边界同步。
 - `5989af0 Split runtime helpers from main`
   - 拆出异步物理/网络运行时。
   - 拆出 UTF-8 文本工具。
@@ -33,6 +39,26 @@
   - 将 `DrawGame` 细拆到 `src/game_draw.inc`。
   - `src/main.cpp` 从约 2739 行降到约 1864 行。
 
+本轮已处理内容：
+
+- 联机自由球同步：
+  - `ApplySyncedBalls(Game&, bool preserveCueBall = false)` 支持摆球方保留本地白球位置，同时继续接收权威目标球位置。
+  - 客户端只在真正收到 `Positions` 包时覆盖本地球位，不再每帧用旧同步缓存覆盖。
+- 袋口和库边：
+  - 库边入口形状改为“平行库边直线、一小段曲线、约 45 度入袋直线”的三段结构。
+  - 视觉库边和物理碰撞体同步更新，贝塞尔分段增加，袋口过渡更平滑。
+  - 袋口常量改为完整开口语义：角袋 `85mm`，中袋 `86mm`，球径仍为 `57.15mm`。
+  - 可见袋洞、库边断点、`PocketRadiusForIndex` 和进袋判定统一使用 `kCornerPocketAxisGap` / `kSidePocketHalfMouth`，避免视觉与物理脱节。
+- 应用图标：
+  - 新增 `assets/heyball_icon.png`、`assets/heyball_icon.ico`、`heyball.rc`。
+  - CMake 将 ICO 资源嵌入 exe，并把 PNG 复制到运行目录。
+  - 启动时同时使用 raylib/GLFW `SetWindowIcons` 和 Windows `WM_SETICON` / 窗口类图标，避免任务栏回退为默认 exe 图标。
+  - 图标透明留白已收紧，有效覆盖约 `90.8% x 93.0%`，避免任务栏图标比其他应用小一圈。
+- Release 输出：
+  - `build/` 不再作为仓库内容维护，只保留为本地 CMake 构建树。
+  - Release 玩家运行文件输出到根目录 `release/`，该目录只应包含 `heyball.exe`、`glfw3.dll`、`PingFangSC.otf`、`heyball_icon.png` 等运行必需文件。
+  - `release/` 和 `build/` 都在 `.gitignore` 中，避免提交中间文件、测试程序、静态库、Ninja/CMake 缓存和对象文件。
+
 ## 构建环境
 
 不要把某一台机器上的工具路径当成永久事实。后续开发者可能在另一台机器上工作，只要路径和工具链有效，就应优先使用仓库已有的标准 CMake 预设。
@@ -40,9 +66,11 @@
 首选验证命令：
 
 ```powershell
+D:\msys64\ucrt64\bin\cmake.exe --preset ucrt64-debug
 D:\msys64\ucrt64\bin\cmake.exe --build --preset ucrt64-debug
-D:\msys64\ucrt64\bin\cmake.exe --build --preset ucrt64-release
 D:\msys64\ucrt64\bin\ctest.exe --preset ucrt64-debug --output-on-failure
+D:\msys64\ucrt64\bin\cmake.exe --preset ucrt64-release
+D:\msys64\ucrt64\bin\cmake.exe --build --preset ucrt64-release
 D:\msys64\ucrt64\bin\ctest.exe --preset ucrt64-release --output-on-failure
 ```
 
@@ -51,6 +79,13 @@ D:\msys64\ucrt64\bin\ctest.exe --preset ucrt64-release --output-on-failure
 - MSYS2 UCRT64 根目录：`D:/msys64/ucrt64`
 - Debug 构建目录：`build/ucrt64-debug`
 - Release 构建目录：`build/ucrt64-release`
+- Release 玩家输出目录：`release/`
+
+注意区分 `build/ucrt64-release` 和 `release/`：
+
+- `build/ucrt64-release` 是 CMake/Ninja 本地构建树，可以包含缓存、对象文件、测试程序和临时文件，不面向玩家分发。
+- `release/` 是 Release 构建生成的玩家目录，只放正常游玩需要的运行文件。
+- 不要把 `build/` 或 `release/` 内容提交进仓库；需要发布二进制时，应从干净的 `release/` 目录单独打包。
 
 如果当前机器上的 `D:\msys64\ucrt64` 损坏或不可用，才使用本机备用工具链。不要把备用路径写入源码或 CMake 固定配置，除非用户明确要求。当前这台机器曾验证过的备用组合如下，仅作应急参考：
 

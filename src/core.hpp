@@ -13,8 +13,11 @@ constexpr double kBallRadius = 0.028575;
 constexpr double kBallDiameter = kBallRadius * 2.0;
 constexpr double kHeadSpotX = -kTableWidth * 0.25;
 constexpr double kFootSpotX = kTableWidth * 0.25;
-constexpr double kCornerPocketMouth = 0.0762;
-constexpr double kSidePocketMouth = 0.0825;
+constexpr double kCornerPocketMouth = 0.085;
+constexpr double kSidePocketMouth = 0.086;
+constexpr double kCornerPocketAxisGap =
+    kCornerPocketMouth * 0.7071067811865476;
+constexpr double kSidePocketHalfMouth = kSidePocketMouth * 0.5;
 constexpr double kCushionNoseInset = 0.035;
 constexpr double kFixedStep = 1.0 / 240.0;
 

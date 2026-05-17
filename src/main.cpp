@@ -23,6 +23,17 @@ extern "C" __declspec(dllimport) short __stdcall GetAsyncKeyState(int key);
 extern "C" __declspec(dllimport) int __stdcall SetWindowPos(void *hwnd, void *insertAfter,
                                                            int x, int y, int cx, int cy,
                                                            unsigned int flags);
+extern "C" __declspec(dllimport) void *__stdcall GetModuleHandleW(const wchar_t *moduleName);
+extern "C" __declspec(dllimport) int __stdcall GetSystemMetrics(int index);
+extern "C" __declspec(dllimport) void *__stdcall LoadImageW(void *instance,
+                                                            const wchar_t *name,
+                                                            unsigned int type,
+                                                            int width, int height,
+                                                            unsigned int flags);
+extern "C" __declspec(dllimport) std::intptr_t __stdcall SendMessageW(
+    void *hwnd, unsigned int message, std::uintptr_t wparam, std::intptr_t lparam);
+extern "C" __declspec(dllimport) std::intptr_t __stdcall SetClassLongPtrW(
+    void *hwnd, int index, std::intptr_t newValue);
 #endif
 namespace {
 using hb::Ball;
@@ -146,6 +157,59 @@ void ApplyWindowBounds(int x, int y, int width, int height) {
 #endif
   SetWindowPosition(x, y);
   SetWindowSize(width, height);
+}
+void ApplyAppWindowIcon() {
+  Image icon = LoadImage("heyball_icon.png");
+  if (icon.data == nullptr) {
+    icon = LoadImage("assets/heyball_icon.png");
+  }
+  if (icon.data != nullptr) {
+    const int sizes[] = {16, 24, 32, 48, 64, 128, 256};
+    Image icons[sizeof(sizes) / sizeof(sizes[0])]{};
+    for (size_t i = 0; i < sizeof(sizes) / sizeof(sizes[0]); ++i) {
+      icons[i] = ImageCopy(icon);
+      ImageResize(&icons[i], sizes[i], sizes[i]);
+    }
+    SetWindowIcons(icons, static_cast<int>(sizeof(sizes) / sizeof(sizes[0])));
+    for (Image &resized : icons) {
+      UnloadImage(resized);
+    }
+    UnloadImage(icon);
+  }
+#ifdef _WIN32
+  constexpr unsigned int kImageIcon = 1;
+  constexpr unsigned int kWmSetIcon = 0x0080;
+  constexpr std::uintptr_t kIconSmall = 0;
+  constexpr std::uintptr_t kIconBig = 1;
+  constexpr int kGclpHIcon = -14;
+  constexpr int kGclpHIconSmall = -34;
+  constexpr int kSmCxIcon = 11;
+  constexpr int kSmCyIcon = 12;
+  constexpr int kSmCxSmallIcon = 49;
+  constexpr int kSmCySmallIcon = 50;
+  void *window = GetWindowHandle();
+  void *module = GetModuleHandleW(nullptr);
+  void *largeIcon = LoadImageW(module, reinterpret_cast<const wchar_t *>(1),
+                               kImageIcon, GetSystemMetrics(kSmCxIcon),
+                               GetSystemMetrics(kSmCyIcon), 0);
+  void *smallIcon = LoadImageW(module, reinterpret_cast<const wchar_t *>(1),
+                               kImageIcon, GetSystemMetrics(kSmCxSmallIcon),
+                               GetSystemMetrics(kSmCySmallIcon), 0);
+  if (window != nullptr) {
+    if (largeIcon != nullptr) {
+      SendMessageW(window, kWmSetIcon, kIconBig,
+                   reinterpret_cast<std::intptr_t>(largeIcon));
+      SetClassLongPtrW(window, kGclpHIcon,
+                       reinterpret_cast<std::intptr_t>(largeIcon));
+    }
+    if (smallIcon != nullptr) {
+      SendMessageW(window, kWmSetIcon, kIconSmall,
+                   reinterpret_cast<std::intptr_t>(smallIcon));
+      SetClassLongPtrW(window, kGclpHIconSmall,
+                       reinterpret_cast<std::intptr_t>(smallIcon));
+    }
+  }
+#endif
 }
 void BeginWindowAction(Game &game, int resizeMode) {
   game.resizeMode = resizeMode;
@@ -501,7 +565,7 @@ Vector2 BezierCubic(Vector2 a, Vector2 b, Vector2 c, Vector2 d, float t) {
 }
 void AppendBezier(std::vector<Vector2> &points, Vector2 a, Vector2 b,
                   Vector2 c, Vector2 d) {
-  constexpr int segments = 14;
+  constexpr int segments = 20;
   for (int i = 1; i <= segments; ++i) {
     points.push_back(BezierCubic(a, b, c, d,
                                  static_cast<float>(i) / segments));
@@ -533,32 +597,43 @@ void DrawHorizontalCushion(float x1, float x2, float outerY, float depth,
   if (x2 <= x1 + depth * 2.0f) {
     return;
   }
-  const float jaw = std::min(depth * 2.45f, (x2 - x1) * 0.42f);
+  const float jaw = std::min(depth * 1.60f, (x2 - x1) * 0.28f);
+  const float bevel = std::min(depth * 0.60f, jaw * 0.55f);
   const float innerY = outerY + (top ? depth : -depth);
   const float sy = top ? 1.0f : -1.0f;
+  const Vector2 leftPocket{x1, outerY};
+  const Vector2 leftBevel{x1 + bevel, outerY + sy * bevel};
+  const Vector2 leftStraight{x1 + jaw, innerY};
+  const Vector2 rightPocket{x2, outerY};
+  const Vector2 rightBevel{x2 - bevel, outerY + sy * bevel};
+  const Vector2 rightStraight{x2 - jaw, innerY};
   const Color rubber{26, 73, 59, 255};
   const Color nose{7, 31, 25, 205};
   std::vector<Vector2> body;
-  body.push_back({x1, outerY});
-  body.push_back({x2, outerY});
-  AppendBezier(body, {x2, outerY},
-               {x2 - jaw * 0.08f, outerY + sy * depth * 0.16f},
-               {x2 - jaw * 0.52f, innerY}, {x2 - jaw, innerY});
-  body.push_back({x1 + jaw, innerY});
-  AppendBezier(body, {x1 + jaw, innerY},
-               {x1 + jaw * 0.52f, innerY},
-               {x1 + jaw * 0.08f, outerY + sy * depth * 0.16f},
-               {x1, outerY});
+  body.push_back(leftPocket);
+  body.push_back(rightPocket);
+  body.push_back(rightBevel);
+  AppendBezier(body, rightBevel,
+               {rightBevel.x - bevel * 0.16f, rightBevel.y + sy * bevel * 0.16f},
+               {rightStraight.x + (jaw - bevel) * 0.38f, innerY},
+               rightStraight);
+  body.push_back(leftStraight);
+  AppendBezier(body, leftStraight,
+               {leftStraight.x - (jaw - bevel) * 0.38f, innerY},
+               {leftBevel.x + bevel * 0.16f, leftBevel.y + sy * bevel * 0.16f},
+               leftBevel);
   FillPolygonFan(body, rubber);
-  std::vector<Vector2> noseLine{{x1, outerY}};
-  AppendBezier(noseLine, {x1, outerY},
-               {x1 + jaw * 0.08f, outerY + sy * depth * 0.16f},
-               {x1 + jaw * 0.52f, innerY}, {x1 + jaw, innerY});
-  noseLine.push_back({x2 - jaw, innerY});
-  AppendBezier(noseLine, {x2 - jaw, innerY},
-               {x2 - jaw * 0.52f, innerY},
-               {x2 - jaw * 0.08f, outerY + sy * depth * 0.16f},
-               {x2, outerY});
+  std::vector<Vector2> noseLine{leftPocket, leftBevel};
+  AppendBezier(noseLine, leftBevel,
+               {leftBevel.x + bevel * 0.16f, leftBevel.y + sy * bevel * 0.16f},
+               {leftStraight.x - (jaw - bevel) * 0.38f, innerY},
+               leftStraight);
+  noseLine.push_back(rightStraight);
+  AppendBezier(noseLine, rightStraight,
+               {rightStraight.x + (jaw - bevel) * 0.38f, innerY},
+               {rightBevel.x - bevel * 0.16f, rightBevel.y + sy * bevel * 0.16f},
+               rightBevel);
+  noseLine.push_back(rightPocket);
   DrawPolyline(noseLine, 1.35f, nose);
 }
 void DrawVerticalCushion(float outerX, float y1, float y2, float depth,
@@ -566,43 +641,57 @@ void DrawVerticalCushion(float outerX, float y1, float y2, float depth,
   if (y2 <= y1 + depth * 2.0f) {
     return;
   }
-  const float jaw = std::min(depth * 2.45f, (y2 - y1) * 0.42f);
+  const float jaw = std::min(depth * 1.60f, (y2 - y1) * 0.28f);
+  const float bevel = std::min(depth * 0.60f, jaw * 0.55f);
   const float innerX = outerX + (left ? depth : -depth);
   const float sx = left ? 1.0f : -1.0f;
+  const Vector2 topPocket{outerX, y1};
+  const Vector2 topBevel{outerX + sx * bevel, y1 + bevel};
+  const Vector2 topStraight{innerX, y1 + jaw};
+  const Vector2 bottomPocket{outerX, y2};
+  const Vector2 bottomBevel{outerX + sx * bevel, y2 - bevel};
+  const Vector2 bottomStraight{innerX, y2 - jaw};
   const Color rubber{26, 73, 59, 255};
   const Color nose{7, 31, 25, 205};
   std::vector<Vector2> body;
-  body.push_back({outerX, y1});
-  body.push_back({outerX, y2});
-  AppendBezier(body, {outerX, y2},
-               {outerX + sx * depth * 0.16f, y2 - jaw * 0.08f},
-               {innerX, y2 - jaw * 0.52f}, {innerX, y2 - jaw});
-  body.push_back({innerX, y1 + jaw});
-  AppendBezier(body, {innerX, y1 + jaw},
-               {innerX, y1 + jaw * 0.52f},
-               {outerX + sx * depth * 0.16f, y1 + jaw * 0.08f},
-               {outerX, y1});
+  body.push_back(topPocket);
+  body.push_back(bottomPocket);
+  body.push_back(bottomBevel);
+  AppendBezier(body, bottomBevel,
+               {bottomBevel.x + sx * bevel * 0.16f, bottomBevel.y - bevel * 0.16f},
+               {innerX, bottomStraight.y + (jaw - bevel) * 0.38f},
+               bottomStraight);
+  body.push_back(topStraight);
+  AppendBezier(body, topStraight,
+               {innerX, topStraight.y - (jaw - bevel) * 0.38f},
+               {topBevel.x + sx * bevel * 0.16f, topBevel.y + bevel * 0.16f},
+               topBevel);
   FillPolygonFan(body, rubber);
-  std::vector<Vector2> noseLine{{outerX, y1}};
-  AppendBezier(noseLine, {outerX, y1},
-               {outerX + sx * depth * 0.16f, y1 + jaw * 0.08f},
-               {innerX, y1 + jaw * 0.52f}, {innerX, y1 + jaw});
-  noseLine.push_back({innerX, y2 - jaw});
-  AppendBezier(noseLine, {innerX, y2 - jaw},
-               {innerX, y2 - jaw * 0.52f},
-               {outerX + sx * depth * 0.16f, y2 - jaw * 0.08f},
-               {outerX, y2});
+  std::vector<Vector2> noseLine{topPocket, topBevel};
+  AppendBezier(noseLine, topBevel,
+               {topBevel.x + sx * bevel * 0.16f, topBevel.y + bevel * 0.16f},
+               {innerX, topStraight.y - (jaw - bevel) * 0.38f},
+               topStraight);
+  noseLine.push_back(bottomStraight);
+  AppendBezier(noseLine, bottomStraight,
+               {innerX, bottomStraight.y + (jaw - bevel) * 0.38f},
+               {bottomBevel.x + sx * bevel * 0.16f, bottomBevel.y - bevel * 0.16f},
+               bottomBevel);
+  noseLine.push_back(bottomPocket);
   DrawPolyline(noseLine, 1.35f, nose);
 }
 void DrawPocketShape(const View &view, int index, Vector2 p) {
   const bool side = index == 1 || index == 4;
-  const double mouth = side ? hb::kSidePocketMouth : hb::kCornerPocketMouth;
-  const float mouthPx = static_cast<float>(mouth * view.scale);
-  const float r = std::max(14.0f * view.uiScale, mouthPx * (side ? 0.54f : 0.58f));
+  const double openingRadius =
+      side ? hb::kSidePocketHalfMouth : hb::kCornerPocketAxisGap;
+  const float r =
+      static_cast<float>(openingRadius * view.scale);
+  const float outerLip = std::max(1.5f * view.uiScale, r * 0.06f);
+  const float innerLip = std::max(0.6f * view.uiScale, r * 0.025f);
   const Color rim{42, 39, 32, 240};
   const Color innerRim{6, 8, 7, 255};
-  DrawCircleV(p, r + 4.0f * view.uiScale, rim);
-  DrawCircleV(p, r + 1.5f * view.uiScale, innerRim);
+  DrawCircleV(p, r + outerLip, rim);
+  DrawCircleV(p, r + innerLip, innerRim);
   DrawCircleV(p, r, BLACK);
 }
 void DrawPockets(const View &view) {
@@ -622,9 +711,9 @@ void DrawTable(const View &view) {
   const float frameW = 16.0f * view.uiScale;
   const float cushionD = static_cast<float>(hb::kCushionNoseInset * view.scale);
   const float sideGap =
-      static_cast<float>(hb::kSidePocketMouth * 0.74 * view.scale);
+      static_cast<float>(hb::kSidePocketHalfMouth * view.scale);
   const float cornerGap =
-      static_cast<float>(hb::kCornerPocketMouth * 0.74 * view.scale);
+      static_cast<float>(hb::kCornerPocketAxisGap * view.scale);
   Rectangle rail{view.play.x - frameW, view.play.y - frameW,
                  view.play.width + frameW * 2, view.play.height + frameW * 2};
   DrawRectangleRounded(rail, 0.018f, 12, {17, 19, 18, 255});
@@ -658,7 +747,7 @@ void DrawDetailedCue(Vector2 cueBall, Vector2 aimDir, float ballR,
 void DrawTaperedRect(Vector2 a, Vector2 b, float wA, float wB, Color color);
 std::string LocalPlayerLabel(const Game &game, int player);
 std::string LocalStatusMessage(const Game &game);
-void ApplySyncedBalls(Game &game);
+void ApplySyncedBalls(Game &game, bool preserveCueBall = false);
 Rectangle ChatWindowRect(const Game &game);
 void DrawCueShadow(const Game &game, const View &view) {
   if (game.phase != Phase::Aiming || game.world.CueBall().pocketed ||
@@ -802,9 +891,9 @@ bool SyncPhysics(Game &game) {
   game.physics.Snapshot(&game.world, &game.shotEvents, &finished);
   return finished;
 }
-void ApplySyncedBalls(Game &game) {
+void ApplySyncedBalls(Game &game, bool preserveCueBall) {
   game.physics.Stop();
-  for (int i = 0; i < 16; ++i) {
+  for (int i = preserveCueBall ? 1 : 0; i < 16; ++i) {
     Ball &dst = game.world.Balls()[i];
     const Ball &src = game.syncedBalls[i];
     dst.pos = src.pos;
@@ -1864,6 +1953,7 @@ int main(int argc, char **argv) {
   EnableDebugConsoleIfRequested(argc, argv);
   SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_UNDECORATED);
   InitWindow(1360, 820, "\xe4\xb8\xad\xe5\xbc\x8f\xe5\x8f\xb0\xe7\x90\x83");
+  ApplyAppWindowIcon();
   SetExitKey(KEY_NULL);
   SetWindowMinSize(960, 600);
   SetTargetFPS(240);

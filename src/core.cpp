@@ -25,8 +25,7 @@ std::array<Vec2, 6> PocketCenters() {
 }
 
 double PocketRadiusForIndex(int i) {
-  const double mouth = (i == 1 || i == 4) ? kSidePocketMouth : kCornerPocketMouth;
-  return mouth * 0.78;
+  return (i == 1 || i == 4) ? kSidePocketHalfMouth : kCornerPocketAxisGap;
 }
 
 bool IsMovingIntoPocket(Vec2 pos, Vec2 vel, Vec2 center) {
@@ -47,7 +46,7 @@ bool IsPocketCapture(Vec2 pos, Vec2 vel, int index, Vec2 center) {
 
   const bool sidePocket = index == 1 || index == 4;
   if (sidePocket) {
-    const double halfMouth = kSidePocketMouth * 0.74 + kBallRadius * 0.35;
+    const double halfMouth = kSidePocketHalfMouth + kBallRadius * 0.35;
     const double throatDepth = kCushionNoseInset + kBallRadius * 0.85;
     const double fallDepth = kBallRadius * 0.44;
     if (std::abs(pos.x - center.x) > halfMouth) {
@@ -64,7 +63,7 @@ bool IsPocketCapture(Vec2 pos, Vec2 vel, int index, Vec2 center) {
   const bool top = index == 0 || index == 2;
   const double inwardX = left ? pos.x - center.x : center.x - pos.x;
   const double inwardY = top ? pos.y - center.y : center.y - pos.y;
-  const double mouth = kCornerPocketMouth * 0.74 + kBallRadius * 0.35;
+  const double mouth = kCornerPocketAxisGap + kBallRadius * 0.35;
   const double throatDepth = kCushionNoseInset + kBallRadius * 0.85;
   const double fallDepth = kBallRadius * 0.44;
   const double outsideAllowance = kBallRadius * 0.25;
@@ -212,7 +211,7 @@ void AddCushionSegment(std::vector<CushionSegment> &segments, Vec2 a, Vec2 b) {
 
 void AppendCushionBezier(std::vector<CushionSegment> &segments, Vec2 a, Vec2 b,
                          Vec2 c, Vec2 d) {
-  constexpr int kSegments = 10;
+  constexpr int kSegments = 16;
   Vec2 previous = a;
   for (int i = 1; i <= kSegments; ++i) {
     const Vec2 next =
@@ -240,15 +239,27 @@ void AddHorizontalCushion(std::vector<CushionSegment> &segments, double x1,
   const double sy = top ? 1.0 : -1.0;
   const double innerY = outerY + sy * kCushionNoseInset;
   const double jaw =
-      std::min(kCushionNoseInset * 2.45, (x2 - x1) * 0.42);
-  AppendCushionBezier(segments, {x1, outerY},
-                      {x1 + jaw * 0.08, outerY + sy * kCushionNoseInset * 0.16},
-                      {x1 + jaw * 0.52, innerY}, {x1 + jaw, innerY});
-  AddCushionSegment(segments, {x1 + jaw, innerY}, {x2 - jaw, innerY});
-  AppendCushionBezier(segments, {x2 - jaw, innerY},
-                      {x2 - jaw * 0.52, innerY},
-                      {x2 - jaw * 0.08, outerY + sy * kCushionNoseInset * 0.16},
-                      {x2, outerY});
+      std::min(kCushionNoseInset * 1.60, (x2 - x1) * 0.28);
+  const double bevel = std::min(kCushionNoseInset * 0.60, jaw * 0.55);
+  const Vec2 leftPocket{x1, outerY};
+  const Vec2 leftBevel{x1 + bevel, outerY + sy * bevel};
+  const Vec2 leftStraight{x1 + jaw, innerY};
+  const Vec2 rightPocket{x2, outerY};
+  const Vec2 rightBevel{x2 - bevel, outerY + sy * bevel};
+  const Vec2 rightStraight{x2 - jaw, innerY};
+  AddCushionSegment(segments, leftPocket, leftBevel);
+  AppendCushionBezier(segments, leftBevel,
+                      {leftBevel.x + bevel * 0.16,
+                       leftBevel.y + sy * bevel * 0.16},
+                      {leftStraight.x - (jaw - bevel) * 0.38, innerY},
+                      leftStraight);
+  AddCushionSegment(segments, leftStraight, rightStraight);
+  AppendCushionBezier(segments, rightStraight,
+                      {rightStraight.x + (jaw - bevel) * 0.38, innerY},
+                      {rightBevel.x - bevel * 0.16,
+                       rightBevel.y + sy * bevel * 0.16},
+                      rightBevel);
+  AddCushionSegment(segments, rightBevel, rightPocket);
 }
 
 void AddVerticalCushion(std::vector<CushionSegment> &segments, double outerX,
@@ -259,15 +270,27 @@ void AddVerticalCushion(std::vector<CushionSegment> &segments, double outerX,
   const double sx = left ? 1.0 : -1.0;
   const double innerX = outerX + sx * kCushionNoseInset;
   const double jaw =
-      std::min(kCushionNoseInset * 2.45, (y2 - y1) * 0.42);
-  AppendCushionBezier(segments, {outerX, y1},
-                      {outerX + sx * kCushionNoseInset * 0.16, y1 + jaw * 0.08},
-                      {innerX, y1 + jaw * 0.52}, {innerX, y1 + jaw});
-  AddCushionSegment(segments, {innerX, y1 + jaw}, {innerX, y2 - jaw});
-  AppendCushionBezier(segments, {innerX, y2 - jaw},
-                      {innerX, y2 - jaw * 0.52},
-                      {outerX + sx * kCushionNoseInset * 0.16, y2 - jaw * 0.08},
-                      {outerX, y2});
+      std::min(kCushionNoseInset * 1.60, (y2 - y1) * 0.28);
+  const double bevel = std::min(kCushionNoseInset * 0.60, jaw * 0.55);
+  const Vec2 topPocket{outerX, y1};
+  const Vec2 topBevel{outerX + sx * bevel, y1 + bevel};
+  const Vec2 topStraight{innerX, y1 + jaw};
+  const Vec2 bottomPocket{outerX, y2};
+  const Vec2 bottomBevel{outerX + sx * bevel, y2 - bevel};
+  const Vec2 bottomStraight{innerX, y2 - jaw};
+  AddCushionSegment(segments, topPocket, topBevel);
+  AppendCushionBezier(segments, topBevel,
+                      {topBevel.x + sx * bevel * 0.16,
+                       topBevel.y + bevel * 0.16},
+                      {innerX, topStraight.y - (jaw - bevel) * 0.38},
+                      topStraight);
+  AddCushionSegment(segments, topStraight, bottomStraight);
+  AppendCushionBezier(segments, bottomStraight,
+                      {innerX, bottomStraight.y + (jaw - bevel) * 0.38},
+                      {bottomBevel.x + sx * bevel * 0.16,
+                       bottomBevel.y - bevel * 0.16},
+                      bottomBevel);
+  AddCushionSegment(segments, bottomBevel, bottomPocket);
 }
 
 std::vector<CushionSegment> CushionSegments() {
@@ -275,8 +298,8 @@ std::vector<CushionSegment> CushionSegments() {
   const double right = kTableWidth * 0.5;
   const double top = -kTableHeight * 0.5;
   const double bottom = kTableHeight * 0.5;
-  const double cornerGap = kCornerPocketMouth * 0.74;
-  const double sideGap = kSidePocketMouth * 0.74;
+  const double cornerGap = kCornerPocketAxisGap;
+  const double sideGap = kSidePocketHalfMouth;
 
   std::vector<CushionSegment> segments;
   segments.reserve(72);

@@ -826,14 +826,16 @@ bool UpdateOnlineMatch(Game &game, const View &view) {
     }
     // Client: receive and render positions
     if (!amHost) {
+      bool receivedPositions = false;
       if (game.client.HasPositions(nullptr)) {
         game.client.HasPositions(&game.syncedBalls);
+        receivedPositions = true;
       }
-      // Override world ball positions with synced data when not actively computing physics
-      const bool waitingForCuePlacementAck =
-          isMyTurn && game.onlineCuePlacementActive;
-      if (!waitingForCuePlacementAck && game.phase != Phase::Moving) {
-        ApplySyncedBalls(game);
+      if (receivedPositions) {
+        const bool preserveLocalCue =
+            isMyTurn && game.onlineCuePlacementActive &&
+            game.phase == Phase::BallInHand;
+        ApplySyncedBalls(game, preserveLocalCue);
       }
     }
     // Handle turn messages for client
