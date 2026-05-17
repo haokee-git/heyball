@@ -51,6 +51,8 @@ public:
   bool HasJoinRequest(std::string *password = nullptr) const;
   bool HasReady() const;
   bool HasUnready() const;
+  bool HasCuePlacement(hb::Vec2 *pos = nullptr, bool *confirmed = nullptr) const;
+  bool HasGroupChoice(hb::BallGroup *group = nullptr) const;
   bool HasShot(hb::ShotParams *out) const;
   bool HasAim(double *tipX, double *tipY, double *power, double *aimX,
               double *aimY) const;
@@ -66,6 +68,7 @@ public:
   void SendUnready();
   void SendAssign(int player);
   void SendTurn(int player);
+  void SendState(hb::Phase phase, const hb::RulesState &state);
   void SendPositions(const std::array<hb::Ball, 16> &balls);
   void SendShot(double tipX, double tipY, double power, double aimX, double aimY);
   void SendChat(const std::string &msg);
@@ -78,12 +81,17 @@ private:
     bool hasJoin = false;
     bool hasReady = false;
     bool hasUnready = false;
+    bool hasCuePlacement = false;
+    bool hasGroupChoice = false;
     bool hasShot = false;
     bool hasAim = false;
     bool hasChat = false;
     bool hasBye = false;
     bool clientGone = false;
     std::string joinPwd;
+    hb::Vec2 cuePlacementPos{};
+    bool cuePlacementConfirmed = false;
+    hb::BallGroup groupChoice = hb::BallGroup::Open;
     hb::ShotParams shot;
     double aimTipX = 0.0;
     double aimTipY = 0.0;
@@ -127,7 +135,8 @@ public:
   void Stop();
   void Poll();
   std::vector<hb::RoomInfo> GetRooms();
-  bool Connect(const std::string &hostIP, const std::string &password);
+  bool Connect(const std::string &hostIP, const std::string &password,
+               const std::string &roomId = "");
   void Disconnect();
   bool IsConnecting() const;
   bool IsAccepted() const;
@@ -137,6 +146,7 @@ public:
   bool HasUnreadyAck() const;
   bool HasAssign(int *player = nullptr) const;
   bool HasTurn(int *player = nullptr) const;
+  bool HasState(hb::Phase *phase = nullptr, hb::RulesState *state = nullptr) const;
   bool HasPositions(std::array<hb::Ball, 16> *balls = nullptr) const;
   bool HasShot(hb::ShotParams *out = nullptr) const;
   bool HasAim(double *tipX, double *tipY, double *power, double *aimX,
@@ -148,6 +158,8 @@ public:
 
   void SendReady();
   void SendUnready();
+  void SendCuePlacement(hb::Vec2 pos, bool confirmed);
+  void SendGroupChoice(hb::BallGroup group);
   void SendShot(double tipX, double tipY, double power, double aimX, double aimY);
   void SendAim(double tipX, double tipY, double power, double aimX, double aimY);
   void SendChat(const std::string &msg);
@@ -159,6 +171,7 @@ private:
     bool hasUnreadyAck = false;
     bool hasAssign = false;
     bool hasTurn = false;
+    bool hasState = false;
     bool hasPositions = false;
     bool hasShot = false;
     bool hasAim = false;
@@ -168,6 +181,8 @@ private:
     bool disconnected = false;
     int assignPlayer = -1;
     int turnPlayer = -1;
+    hb::Phase statePhase = hb::Phase::Aiming;
+    hb::RulesState rulesState{};
     std::array<hb::Ball, 16> balls{};
     hb::ShotParams shot;
     double aimTipX = 0.0;

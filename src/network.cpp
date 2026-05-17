@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <sstream>
 
@@ -125,6 +126,54 @@ std::vector<std::string> SplitLines(std::string &buf) {
   return lines;
 }
 
+std::string NewRoomId() {
+  static uint32_t sequence = 0;
+  char buf[64];
+  std::snprintf(buf, sizeof(buf), "%.0f-%u", GetTime() * 1000.0, ++sequence);
+  return buf;
+}
+
+std::string BroadcastField(std::string value) {
+  for (char &ch : value) {
+    if (ch == '|' || ch == '\r' || ch == '\n') ch = ' ';
+  }
+  return value;
+}
+
+std::string LineField(std::string value) {
+  for (char &ch : value) {
+    if (ch == '\r' || ch == '\n') ch = ' ';
+  }
+  return value;
+}
+
+int PhaseCode(Phase phase) {
+  return static_cast<int>(phase);
+}
+
+Phase PhaseFromCode(int code) {
+  switch (code) {
+  case 0: return Phase::Aiming;
+  case 1: return Phase::Moving;
+  case 2: return Phase::BallInHand;
+  case 3: return Phase::GroupChoice;
+  case 4: return Phase::RackOver;
+  default: return Phase::Aiming;
+  }
+}
+
+int GroupCode(BallGroup group) {
+  return static_cast<int>(group);
+}
+
+BallGroup GroupFromCode(int code) {
+  switch (code) {
+  case 1: return BallGroup::Solids;
+  case 2: return BallGroup::Stripes;
+  default: return BallGroup::Open;
+  }
+}
+
 } // namespace
 
 // ─── NetworkHost ────────────────────────────────────────────────────────────
@@ -134,22 +183,28 @@ NetworkHost::NetworkHost()
       tcpListen_(FromSock(INVALID_SOCKET)),
       tcpClient_(FromSock(INVALID_SOCKET)),
       hostIsPlayer1_(true),
+      clientJoined_(false),
       lastBroadcast_(0.0),
+      handshakeDeadline_(0.0),
       hasJoin_(false),
       hasReady_(false),
       hasUnready_(false),
+      hasCuePlacement_(false),
+      hasGroupChoice_(false),
       hasShot_(false),
       hasAim_(false),
       hasChat_(false),
       hasBye_(false),
-      clientGone_(false) {}
+      clientGone_(false),
+      groupChoice_(BallGroup::Open) {}
 
 NetworkHost::~NetworkHost() { Stop(); }
 
 bool NetworkHost::Start(const std::string &roomName,
                         const std::string &password, bool hostIsPlayer1) {
   Stop();
-  hasJoin_ = hasReady_ = hasUnready_ = hasShot_ = hasAim_ = hasChat_ = hasBye_ = false;
+  hasJoin_ = hasReady_ = hasUnready_ = hasCuePlacement_ = hasGroupChoice_ =
+      hasShot_ = hasAim_ = hasChat_ = hasBye_ = false;
   joinPwd_.clear();
   chatMsg_.clear();
   SOCKET udp = CreateUdpSocket(false);
@@ -163,17 +218,28 @@ bool NetworkHost::Start(const std::string &roomName,
   tcpListen_ = FromSock(tcp);
   roomName_ = roomName;
   password_ = password;
+  roomId_ = NewRoomId();
   hostIsPlayer1_ = hostIsPlayer1;
+  clientJoined_ = false;
   lastBroadcast_ = 0.0;
+  handshakeDeadline_ = 0.0;
   clientGone_ = false;
   return true;
 }
 
-void NetworkHost::Stop() {
+void NetworkHost::CloseClient() {
   if (ToSock(tcpClient_) != INVALID_SOCKET) {
     closesocket(ToSock(tcpClient_));
     tcpClient_ = FromSock(INVALID_SOCKET);
   }
+  clientJoined_ = false;
+  handshakeDeadline_ = 0.0;
+  pendingMsgs_.clear();
+  recvBuf_.clear();
+}
+
+void NetworkHost::Stop() {
+  CloseClient();
   if (ToSock(tcpListen_) != INVALID_SOCKET) {
     closesocket(ToSock(tcpListen_));
     tcpListen_ = FromSock(INVALID_SOCKET);
@@ -184,9 +250,11 @@ void NetworkHost::Stop() {
   }
   pendingMsgs_.clear();
   recvBuf_.clear();
-  hasJoin_ = hasReady_ = hasUnready_ = hasShot_ = hasAim_ = hasChat_ = hasBye_ = false;
+  hasJoin_ = hasReady_ = hasUnready_ = hasCuePlacement_ = hasGroupChoice_ =
+      hasShot_ = hasAim_ = hasChat_ = hasBye_ = false;
   joinPwd_.clear();
   chatMsg_.clear();
+  roomId_.clear();
   clientGone_ = false;
 }
 
@@ -203,22 +271,33 @@ void NetworkHost::Poll() {
 void NetworkHost::Broadcast() {
   SOCKET udp = ToSock(udpSock_);
   if (udp == INVALID_SOCKET) return;
-  bool hasClient = ToSock(tcpClient_) != INVALID_SOCKET;
+  bool hasClient = clientJoined_ && ToSock(tcpClient_) != INVALID_SOCKET;
+  const std::string advertisedName = BroadcastField(roomName_);
   char buf[256];
-  std::snprintf(buf, sizeof(buf), "%s%s%s%s%d%s%d", kMagic, kDelim,
-                roomName_.c_str(), kDelim,
+  std::snprintf(buf, sizeof(buf), "%s%s%s%s%d%s%d%s%s", kMagic, kDelim,
+                advertisedName.c_str(), kDelim,
                 password_.empty() ? 0 : 1, kDelim,
-                hasClient ? 2 : 1);
+                hasClient ? 2 : 1, kDelim, roomId_.c_str());
   sockaddr_in addr{};
   addr.sin_family = AF_INET;
   addr.sin_port = htons(kUdpPort);
   addr.sin_addr.s_addr = INADDR_BROADCAST;
   sendto(udp, buf, static_cast<int>(std::strlen(buf)), 0,
          reinterpret_cast<sockaddr *>(&addr), sizeof(addr));
+  addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+  sendto(udp, buf, static_cast<int>(std::strlen(buf)), 0,
+         reinterpret_cast<sockaddr *>(&addr), sizeof(addr));
 }
 
 void NetworkHost::ProcessIncoming() {
-  hasJoin_ = hasReady_ = hasUnready_ = hasShot_ = hasAim_ = hasChat_ = hasBye_ = false;
+  hasJoin_ = hasReady_ = hasUnready_ = hasCuePlacement_ = hasGroupChoice_ =
+      hasShot_ = hasAim_ = hasChat_ = hasBye_ = false;
+  const double now = GetTime();
+  if (ToSock(tcpClient_) != INVALID_SOCKET && !clientJoined_ &&
+      handshakeDeadline_ > 0.0 && now > handshakeDeadline_) {
+    CloseClient();
+  }
+
   // Accept new client
   SOCKET listenSock = ToSock(tcpListen_);
   if (listenSock != INVALID_SOCKET &&
@@ -227,6 +306,8 @@ void NetworkHost::ProcessIncoming() {
     if (client != INVALID_SOCKET) {
       SetNonBlock(client);
       tcpClient_ = FromSock(client);
+      clientJoined_ = false;
+      handshakeDeadline_ = now + 2.0;
       pendingMsgs_.clear();
       recvBuf_.clear();
       clientGone_ = false;
@@ -246,26 +327,81 @@ void NetworkHost::ProcessIncoming() {
     auto lines = SplitLines(recvBuf_);
     for (auto &line : lines) pendingMsgs_.push_back(line);
   } else if (n == 0 || (n == SOCKET_ERROR && WSAGetLastError() != WSAEWOULDBLOCK)) {
-    clientGone_ = true;
-    closesocket(client);
-    tcpClient_ = FromSock(INVALID_SOCKET);
+    clientGone_ = clientJoined_;
+    CloseClient();
+    return;
   }
 
   for (auto &msg : pendingMsgs_) {
+    if (msg.rfind("JOIN2 ", 0) == 0) {
+      const size_t idStart = 6;
+      const size_t pwdStart = msg.find(' ', idStart);
+      const std::string requestedRoomId =
+          pwdStart == std::string::npos ? msg.substr(idStart)
+                                        : msg.substr(idStart, pwdStart - idStart);
+      const std::string requestedPassword =
+          pwdStart == std::string::npos ? std::string() : msg.substr(pwdStart + 1);
+      if (requestedRoomId != roomId_) {
+        SendLine("REJECT room changed");
+        CloseClient();
+        break;
+      }
+      if (!password_.empty() && requestedPassword != password_) {
+        SendLine("REJECT password");
+        CloseClient();
+        break;
+      }
+      clientJoined_ = true;
+      handshakeDeadline_ = 0.0;
+      hasJoin_ = true;
+      joinPwd_ = requestedPassword;
+      SendLine("ACCEPT");
+      continue;
+    }
     if (msg.rfind("JOIN ", 0) == 0) {
       hasJoin_ = true;
       joinPwd_ = msg.substr(5);
       // Auto-accept if password matches
       if (password_.empty() || joinPwd_ == password_) {
+        clientJoined_ = true;
+        handshakeDeadline_ = 0.0;
         SendLine("ACCEPT");
       } else {
         SendLine("REJECT 密码错误");
       }
+      if (!clientJoined_) {
+        hasJoin_ = false;
+        joinPwd_.clear();
+        CloseClient();
+        break;
+      }
     } else if (msg == "READY") {
+      if (!clientJoined_) continue;
       hasReady_ = true;
     } else if (msg == "UNREADY") {
+      if (!clientJoined_) continue;
       hasUnready_ = true;
+    } else if (msg.rfind("CUE_PLACE ", 0) == 0) {
+      if (!clientJoined_) continue;
+      int confirm = 0;
+      if (std::sscanf(msg.c_str(), "CUE_PLACE %lf %lf %d",
+                      &cuePlacementPos_.x, &cuePlacementPos_.y,
+                      &confirm) == 3) {
+        hasCuePlacement_ = true;
+        cuePlacementConfirmed_ = confirm != 0;
+      }
+    } else if (msg.rfind("GROUP_CHOICE ", 0) == 0) {
+      if (!clientJoined_) continue;
+      int groupCode = 0;
+      if (std::sscanf(msg.c_str(), "GROUP_CHOICE %d", &groupCode) == 1) {
+        const BallGroup group = GroupFromCode(groupCode);
+        if (group == BallGroup::Solids || group == BallGroup::Stripes) {
+          hasGroupChoice_ = true;
+          groupChoice_ = group;
+        }
+      }
     } else if (msg.rfind("SHOT ", 0) == 0) {
+      if (!clientJoined_) continue;
       hasShot_ = true;
       double pw;
       std::sscanf(msg.c_str(), "SHOT %lf %lf %lf %lf %lf", &shotParams_.tipX,
@@ -273,6 +409,7 @@ void NetworkHost::ProcessIncoming() {
                   &shotParams_.aim.y);
       shotParams_.power = pw;
     } else if (msg.rfind("AIM ", 0) == 0) {
+      if (!clientJoined_) continue;
       hasAim_ = true;
       double pw, ax, ay;
       std::sscanf(msg.c_str(), "AIM %lf %lf %lf %lf %lf", &aimTipX_, &aimTipY_,
@@ -281,9 +418,11 @@ void NetworkHost::ProcessIncoming() {
       aimDirX_ = ax;
       aimDirY_ = ay;
     } else if (msg.rfind("CHAT ", 0) == 0) {
+      if (!clientJoined_) continue;
       hasChat_ = true;
       chatMsg_ = msg.substr(5);
     } else if (msg == "BYE") {
+      if (!clientJoined_) continue;
       hasBye_ = true;
     }
   }
@@ -323,15 +462,38 @@ void NetworkHost::SendAssign(int player) {
 void NetworkHost::SendTurn(int player) {
   SendLine("TURN " + std::to_string(player));
 }
+
+void NetworkHost::SendState(Phase phase, const RulesState &state) {
+  std::string msg = "STATE " + std::to_string(PhaseCode(phase)) + " " +
+                    std::to_string(state.currentPlayer) + " " +
+                    std::to_string(state.winner) + " " +
+                    std::to_string(state.breakShot ? 1 : 0) + " " +
+                    std::to_string(state.ballInHand ? 1 : 0) + " " +
+                    std::to_string(state.pendingGroupChoice ? 1 : 0) + " " +
+                    std::to_string(GroupCode(state.players[0].group)) + " " +
+                    std::to_string(GroupCode(state.players[1].group)) + " " +
+                    LineField(state.message);
+  SendLine(msg);
+}
+
 void NetworkHost::SendPositions(const std::array<Ball, 16> &balls) {
   std::string msg = "POS";
-  char num[128];
+  char num[512];
   for (const Ball &b : balls) {
     int flags = 0;
     if (b.pocketed) flags |= 2;
     if (b.sinking) flags |= 1;
-    std::snprintf(num, sizeof(num), " %.6f %.6f %d %.6f", b.pos.x, b.pos.y,
-                  flags, b.pocketFade);
+    std::snprintf(num, sizeof(num),
+                  " %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f "
+                  "%.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %d %.6f "
+                  "%.6f %.6f",
+                  b.pos.x, b.pos.y, b.vel.x, b.vel.y, b.rollOmega.x,
+                  b.rollOmega.y, b.sideOmega, b.rollAngle, b.decal.x,
+                  b.decal.y, b.orientation[0], b.orientation[1],
+                  b.orientation[2], b.orientation[3], b.orientation[4],
+                  b.orientation[5], b.orientation[6], b.orientation[7],
+                  b.orientation[8], flags, b.pocketFade, b.sinkTarget.x,
+                  b.sinkTarget.y);
     msg += num;
   }
   SendLine(msg);
@@ -360,6 +522,17 @@ bool NetworkHost::HasJoinRequest(std::string *password) const {
 }
 bool NetworkHost::HasReady() const { return hasReady_; }
 bool NetworkHost::HasUnready() const { return hasUnready_; }
+bool NetworkHost::HasCuePlacement(Vec2 *pos, bool *confirmed) const {
+  if (hasCuePlacement_) {
+    if (pos) *pos = cuePlacementPos_;
+    if (confirmed) *confirmed = cuePlacementConfirmed_;
+  }
+  return hasCuePlacement_;
+}
+bool NetworkHost::HasGroupChoice(BallGroup *group) const {
+  if (hasGroupChoice_ && group) *group = groupChoice_;
+  return hasGroupChoice_;
+}
 bool NetworkHost::HasShot(ShotParams *out) const {
   if (hasShot_ && out) *out = shotParams_;
   return hasShot_;
@@ -381,7 +554,7 @@ bool NetworkHost::HasChat(std::string *msg) const {
 }
 bool NetworkHost::HasBye() const { return hasBye_; }
 bool NetworkHost::HasClient() const {
-  return ToSock(tcpClient_) != INVALID_SOCKET;
+  return clientJoined_ && ToSock(tcpClient_) != INVALID_SOCKET;
 }
 bool NetworkHost::ClientDisconnected() const {
   return clientGone_;
@@ -400,6 +573,7 @@ NetworkClient::NetworkClient()
       hasAssign_(false),
       assignPlayer_(-1),
       hasTurn_(false),
+      hasState_(false),
       hasPositions_(false),
       hasShot_(false),
       hasAim_(false),
@@ -415,7 +589,7 @@ bool NetworkClient::Start() {
   pendingMsgs_.clear();
   recvBuf_.clear();
   rejectReason_.clear();
-  hasReadyAck_ = hasUnreadyAck_ = hasAssign_ = hasTurn_ = hasPositions_ = hasShot_ = false;
+  hasReadyAck_ = hasUnreadyAck_ = hasAssign_ = hasTurn_ = hasState_ = hasPositions_ = hasShot_ = false;
   hasAim_ = hasChat_ = hasBye_ = hasRoomClosed_ = false;
   SOCKET udp = CreateUdpSocket(true);
   if (udp == INVALID_SOCKET) return false;
@@ -460,11 +634,14 @@ void NetworkClient::Poll() {
           ri.name = parts[1];
           ri.hostIP = inet_ntoa(from.sin_addr);
           ri.hasPassword = (parts[2] == "1");
-          ri.playerCount = (parts.size() >= 5) ? std::stoi(parts[3]) : 1;
+          ri.playerCount = (parts.size() >= 4) ? std::atoi(parts[3].c_str()) : 1;
+          if (ri.playerCount < 1 || ri.playerCount > 2) ri.playerCount = 1;
+          ri.roomId = (parts.size() >= 5) ? parts[4] : std::string();
           ri.lastSeen = GetTime();
           bool found = false;
           for (auto &r : rooms_) {
-            if (r.hostIP == ri.hostIP && r.name == ri.name) {
+            if (r.hostIP == ri.hostIP ||
+                (IsLocalAddress(r.hostIP) && IsLocalAddress(ri.hostIP))) {
               r = ri;
               found = true;
               break;
@@ -501,7 +678,8 @@ std::vector<RoomInfo> NetworkClient::GetRooms() {
 }
 
 bool NetworkClient::Connect(const std::string &hostIP,
-                            const std::string &password) {
+                            const std::string &password,
+                            const std::string &roomId) {
   Disconnect();
   SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
   if (s == INVALID_SOCKET) return false;
@@ -525,9 +703,10 @@ bool NetworkClient::Connect(const std::string &hostIP,
   accepted_ = false;
   disconnected_ = false;
   rejectReason_.clear();
-  hasReadyAck_ = false;
-  hasUnreadyAck_ = false;
+  hasReadyAck_ = hasUnreadyAck_ = hasAssign_ = hasTurn_ = hasState_ = hasPositions_ = hasShot_ = false;
+  hasAim_ = hasChat_ = hasBye_ = hasRoomClosed_ = false;
   joinPwd_ = password;
+  joinRoomId_ = roomId;
   pendingMsgs_.clear();
   recvBuf_.clear();
   return true;
@@ -543,7 +722,9 @@ void NetworkClient::Disconnect() {
   disconnected_ = true;
   pendingMsgs_.clear();
   recvBuf_.clear();
-  hasReadyAck_ = hasUnreadyAck_ = hasAssign_ = hasTurn_ = hasPositions_ = hasShot_ = false;
+  joinPwd_.clear();
+  joinRoomId_.clear();
+  hasReadyAck_ = hasUnreadyAck_ = hasAssign_ = hasTurn_ = hasState_ = hasPositions_ = hasShot_ = false;
   hasAim_ = hasChat_ = hasBye_ = hasRoomClosed_ = false;
 }
 
@@ -554,7 +735,7 @@ std::string NetworkClient::RejectReason() const { return rejectReason_; }
 void NetworkClient::ProcessIncoming() {
   SOCKET sock = ToSock(tcpSock_);
   if (sock == INVALID_SOCKET) {
-    hasReadyAck_ = hasUnreadyAck_ = hasAssign_ = hasTurn_ = hasPositions_ = hasShot_ = false;
+    hasReadyAck_ = hasUnreadyAck_ = hasAssign_ = hasTurn_ = hasState_ = hasPositions_ = hasShot_ = false;
     hasAim_ = hasChat_ = hasBye_ = hasRoomClosed_ = false;
     return;
   }
@@ -577,11 +758,17 @@ void NetworkClient::ProcessIncoming() {
         connecting_ = false;
         disconnected_ = true;
         joinPwd_.clear();
+        joinRoomId_.clear();
         return;
       }
       // Connection established — send JOIN now
-      SendLine("JOIN " + joinPwd_);
+      if (joinRoomId_.empty()) {
+        SendLine("JOIN " + joinPwd_);
+      } else {
+        SendLine("JOIN2 " + joinRoomId_ + " " + joinPwd_);
+      }
       joinPwd_.clear();
+      joinRoomId_.clear();
     } else {
       // sel == 0: still connecting, sel < 0: error — wait and retry next poll
       return;
@@ -603,7 +790,7 @@ void NetworkClient::ProcessIncoming() {
     disconnected_ = true;
   }
 
-  hasReadyAck_ = hasUnreadyAck_ = hasAssign_ = hasTurn_ = hasPositions_ = hasShot_ = false;
+  hasReadyAck_ = hasUnreadyAck_ = hasAssign_ = hasTurn_ = hasState_ = hasPositions_ = hasShot_ = false;
   hasAim_ = hasChat_ = hasBye_ = hasRoomClosed_ = false;
   for (auto &msg : pendingMsgs_) {
     if (msg == "ACCEPT") {
@@ -625,6 +812,34 @@ void NetworkClient::ProcessIncoming() {
     } else if (msg.rfind("TURN ", 0) == 0) {
       hasTurn_ = true;
       turnPlayer_ = std::stoi(msg.substr(5));
+    } else if (msg.rfind("STATE ", 0) == 0) {
+      std::istringstream ss(msg.substr(6));
+      int phase = 0;
+      int currentPlayer = 0;
+      int winner = -1;
+      int breakShot = 0;
+      int ballInHand = 0;
+      int pendingGroupChoice = 0;
+      int p0Group = 0;
+      int p1Group = 0;
+      if (ss >> phase >> currentPlayer >> winner >> breakShot >> ballInHand >>
+          pendingGroupChoice >> p0Group >> p1Group) {
+        std::string message;
+        std::getline(ss, message);
+        if (!message.empty() && message.front() == ' ') {
+          message.erase(0, 1);
+        }
+        hasState_ = true;
+        statePhase_ = PhaseFromCode(phase);
+        rulesState_.currentPlayer = currentPlayer == 1 ? 1 : 0;
+        rulesState_.winner = (winner >= 0 && winner <= 1) ? winner : -1;
+        rulesState_.breakShot = breakShot != 0;
+        rulesState_.ballInHand = ballInHand != 0;
+        rulesState_.pendingGroupChoice = pendingGroupChoice != 0;
+        rulesState_.players[0].group = GroupFromCode(p0Group);
+        rulesState_.players[1].group = GroupFromCode(p1Group);
+        rulesState_.message = message;
+      }
     } else if (msg.rfind("POS ", 0) == 0) {
       hasPositions_ = true;
       lastPosData_ = msg.substr(4);
@@ -677,6 +892,15 @@ void NetworkClient::SendLine(const std::string &line) {
 
 void NetworkClient::SendReady() { SendLine("READY"); }
 void NetworkClient::SendUnready() { SendLine("UNREADY"); }
+void NetworkClient::SendCuePlacement(Vec2 pos, bool confirmed) {
+  char buf[128];
+  std::snprintf(buf, sizeof(buf), "CUE_PLACE %.6f %.6f %d", pos.x, pos.y,
+                confirmed ? 1 : 0);
+  SendLine(buf);
+}
+void NetworkClient::SendGroupChoice(BallGroup group) {
+  SendLine("GROUP_CHOICE " + std::to_string(GroupCode(group)));
+}
 void NetworkClient::SendShot(double tipX, double tipY, double power,
                              double aimX, double aimY) {
   char buf[256];
@@ -704,19 +928,62 @@ bool NetworkClient::HasTurn(int *player) const {
   if (hasTurn_ && player) *player = turnPlayer_;
   return hasTurn_;
 }
+bool NetworkClient::HasState(Phase *phase, RulesState *state) const {
+  if (hasState_) {
+    if (phase) *phase = statePhase_;
+    if (state) *state = rulesState_;
+  }
+  return hasState_;
+}
 bool NetworkClient::HasPositions(std::array<Ball, 16> *balls) const {
   if (hasPositions_ && balls) {
     std::istringstream ss(lastPosData_);
     for (int i = 0; i < 16; ++i) {
+      Ball parsed = (*balls)[i];
       double x, y;
       double fade = 0.0;
       int flags = 0;
-      if (!(ss >> x >> y >> flags >> fade)) break;
-      (*balls)[i].pos.x = x;
-      (*balls)[i].pos.y = y;
-      (*balls)[i].pocketed = (flags & 2) != 0;
-      (*balls)[i].sinking = !(*balls)[i].pocketed && (flags & 1) != 0;
-      (*balls)[i].pocketFade = (*balls)[i].pocketed ? 1.0 : fade;
+      if (!(ss >> x >> y)) break;
+      parsed.pos.x = x;
+      parsed.pos.y = y;
+
+      std::streampos afterPosition = ss.tellg();
+      double vx = 0.0;
+      double vy = 0.0;
+      double rollX = 0.0;
+      double rollY = 0.0;
+      double side = 0.0;
+      double rollAngle = 0.0;
+      double decalX = 0.0;
+      double decalY = 0.0;
+      std::array<double, 9> orientation{};
+      double sinkX = 0.0;
+      double sinkY = 0.0;
+      bool extended = false;
+      if (ss >> vx >> vy >> rollX >> rollY >> side >> rollAngle >> decalX >>
+          decalY >> orientation[0] >> orientation[1] >> orientation[2] >>
+          orientation[3] >> orientation[4] >> orientation[5] >> orientation[6] >>
+          orientation[7] >> orientation[8] >> flags >> fade >> sinkX >> sinkY) {
+        extended = true;
+      }
+      if (extended) {
+        parsed.vel = {vx, vy};
+        parsed.rollOmega = {rollX, rollY};
+        parsed.sideOmega = side;
+        parsed.rollAngle = rollAngle;
+        parsed.decal = {decalX, decalY};
+        parsed.orientation = orientation;
+        parsed.sinkTarget = {sinkX, sinkY};
+      } else {
+        ss.clear();
+        if (afterPosition == std::streampos(-1)) break;
+        ss.seekg(afterPosition);
+        if (!(ss >> flags >> fade)) break;
+      }
+      parsed.pocketed = (flags & 2) != 0;
+      parsed.sinking = !parsed.pocketed && (flags & 1) != 0;
+      parsed.pocketFade = parsed.pocketed ? 1.0 : fade;
+      (*balls)[i] = parsed;
     }
   }
   return hasPositions_;

@@ -26,12 +26,12 @@ void HandleChatInput(Game &game) {
   }
   if (game.chatInputActive) {
     if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
-      float sh = static_cast<float>(GetScreenHeight());
-      float us = UiScale();
-      float cw = 280.0f * us;
-      float ch = 150.0f * us;
-      float cx = 12.0f * us;
-      float cy = sh - ch - 12.0f * us;
+      const float us = OnlineUiScale();
+      const Rectangle chat = ChatWindowRect(game);
+      const float cx = chat.x;
+      const float cy = chat.y;
+      const float cw = chat.width;
+      const float ch = chat.height;
       Rectangle inputBox{cx + 4, cy + ch - 28.0f * us, cw - 8, 24.0f * us};
       Vector2 m = GetMousePosition();
       if (CheckCollisionPointRec(m, inputBox)) {
@@ -188,7 +188,8 @@ bool UpdateLobbyMode(Game &game) {
                            74.0f * us2, 32.0f * us2};
         if (CheckCollisionPointRec(mouse, okR2)) {
           game.client.Stop(); game.client.Start();
-          if (game.client.Connect(game.pendingJoinHostIP, game.joinPwdInput)) {
+          if (game.client.Connect(game.pendingJoinHostIP, game.joinPwdInput,
+                                  game.pendingJoinRoomId)) {
             game.appMode = AppMode::RoomClient;
             game.roomName = game.pendingJoinRoomName;
             game.amReady = false;
@@ -262,7 +263,8 @@ bool UpdateLobbyMode(Game &game) {
               game.roomList.clear(); // will re-poll
             } else {
               game.client.Stop(); game.client.Start();
-              if (game.client.Connect(game.roomList[i].hostIP, "")) {
+              if (game.client.Connect(game.roomList[i].hostIP, "",
+                                      game.roomList[i].roomId)) {
                 game.appMode = AppMode::RoomClient;
                 game.roomName = game.roomList[i].name;
                 game.amReady = false;
@@ -385,7 +387,8 @@ bool UpdateLobbyMode(Game &game) {
       if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
         if (CheckCollisionPointRec(mouse, okR2)) {
           game.client.Stop(); game.client.Start();
-          if (game.client.Connect(game.pendingJoinHostIP, game.joinPwdInput)) {
+          if (game.client.Connect(game.pendingJoinHostIP, game.joinPwdInput,
+                                  game.pendingJoinRoomId)) {
             game.appMode = AppMode::RoomClient;
             game.roomName = game.pendingJoinRoomName;
             game.amReady = false;
@@ -465,6 +468,10 @@ bool UpdateLobbyMode(Game &game) {
   return false;
 }
 
+void SendAuthoritativeOnlineState(Game &game, bool includePositions);
+void ApplyClientOnlineState(Game &game, Phase phase,
+                            const hb::RulesState &state);
+
 bool UpdateRoomHostMode(Game &game) {
   if (game.appMode == AppMode::RoomHost) {
     game.host.Poll();
@@ -501,15 +508,14 @@ bool UpdateRoomHostMode(Game &game) {
       game.host.SendAssign(clientPlayer);
       game.physics.Stop();
       game.world.ResetRack();
-      game.rules.ResetRack(game.hostIsPlayer1 ? 0 : 1);
+      game.rules.ResetRack(0);
       game.phase = Phase::Aiming;
       game.onlineTurn = 0;
       if (!game.hostIsPlayer1) game.onlineTurn = 1;
       game.onlineHost = true;
+      game.onlineCuePlacementActive = false;
       game.appMode = AppMode::PlayingOnline;
-      game.host.SendTurn(game.rules.State().currentPlayer);
-      game.host.SendPositions(game.world.Balls());
-      game.syncedBalls = game.world.Balls();
+      SendAuthoritativeOnlineState(game, true);
     }
     // Ready button
     if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
@@ -530,6 +536,7 @@ bool UpdateRoomHostMode(Game &game) {
 bool UpdateRoomClientMode(Game &game) {
   if (game.appMode == AppMode::RoomClient) {
     game.client.Poll();
+    bool receivedLobbyState = false;
     if (game.client.HasAssign(nullptr)) {
       game.client.HasAssign(&game.assignedPlayer);
     }
@@ -537,6 +544,12 @@ bool UpdateRoomClientMode(Game &game) {
     if (game.client.HasTurn(&lobbyTurn)) {
       int turn = lobbyTurn;
       game.rules.State().currentPlayer = turn;
+    }
+    Phase lobbyPhase = Phase::Aiming;
+    hb::RulesState lobbyState{};
+    if (game.client.HasState(&lobbyPhase, &lobbyState)) {
+      ApplyClientOnlineState(game, lobbyPhase, lobbyState);
+      receivedLobbyState = true;
     }
     if (game.client.HasPositions(nullptr)) {
       game.client.HasPositions(&game.syncedBalls);
@@ -569,13 +582,14 @@ bool UpdateRoomClientMode(Game &game) {
     if (game.amReady && game.opReady && game.client.IsAccepted() && game.assignedPlayer >= 0) {
       game.onlineTurn = game.assignedPlayer;
       game.onlineHost = false;
+      game.onlineCuePlacementActive = false;
       game.physics.Stop();
       game.world.ResetRack();
       // Apply synced positions to world
       if (game.syncedBalls[0].pos.x != 0.0 || game.syncedBalls[0].pos.y != 0.0) {
         ApplySyncedBalls(game);
       }
-      game.phase = Phase::Aiming;
+      if (!receivedLobbyState) game.phase = Phase::Aiming;
       game.appMode = AppMode::PlayingOnline;
     }
     if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && game.client.IsAccepted()) {
@@ -591,6 +605,22 @@ bool UpdateRoomClientMode(Game &game) {
     return true;
   }
   return false;
+}
+
+void SendAuthoritativeOnlineState(Game &game, bool includePositions) {
+  game.host.SendTurn(game.rules.State().currentPlayer);
+  game.host.SendState(game.phase, game.rules.State());
+  if (includePositions) {
+    game.host.SendPositions(game.world.Balls());
+    game.syncedBalls = game.world.Balls();
+  }
+}
+
+void ApplyClientOnlineState(Game &game, Phase phase,
+                            const hb::RulesState &state) {
+  game.rules.State() = state;
+  game.phase = phase;
+  game.onlineCuePlacementActive = false;
 }
 
 bool UpdateOnlineMatch(Game &game, const View &view) {
@@ -621,11 +651,31 @@ bool UpdateOnlineMatch(Game &game, const View &view) {
         game.phase = Phase::Aiming;
       }
     }
+    Phase onlinePhase = Phase::Aiming;
+    hb::RulesState onlineState{};
+    if (!amHost && game.client.HasState(&onlinePhase, &onlineState)) {
+      ApplyClientOnlineState(game, onlinePhase, onlineState);
+    }
     bool isMyTurn = (game.rules.State().currentPlayer == game.onlineTurn);
     bool isOpponentTurn = !isMyTurn;
+    const Phase phaseBeforeUi = game.phase;
+    const int playerBeforeUi = game.rules.State().currentPlayer;
+    const bool uiHandled = isMyTurn ? HandleUiInput(game) : false;
+    if (uiHandled && isMyTurn && phaseBeforeUi == Phase::GroupChoice &&
+        game.phase != Phase::GroupChoice &&
+        playerBeforeUi >= 0 && playerBeforeUi < 2) {
+      const BallGroup group = game.rules.State().players[playerBeforeUi].group;
+      if (group == BallGroup::Solids || group == BallGroup::Stripes) {
+        if (amHost) {
+          SendAuthoritativeOnlineState(game, false);
+        } else {
+          game.client.SendGroupChoice(group);
+        }
+      }
+    }
     const float dt = GetFrameTime();
     double now = GetTime();
-    if (isMyTurn && game.phase == Phase::Aiming && !game.world.CueBall().pocketed &&
+    if (isMyTurn && !uiHandled && game.phase == Phase::Aiming && !game.world.CueBall().pocketed &&
         !game.world.CueBall().sinking) {
       const Vec2 mouseWorld = ScreenToWorld(view, GetMousePosition());
       game.aim = hb::Normalize(mouseWorld - game.world.CueBall().pos);
@@ -654,12 +704,32 @@ bool UpdateOnlineMatch(Game &game, const View &view) {
       }
     } else if (isMyTurn && game.phase == Phase::BallInHand) {
       Vec2 pos = ClampCuePlacement(ScreenToWorld(view, GetMousePosition()));
-      if (game.world.CanPlaceCue(pos)) {
+      if (!uiHandled && game.world.CanPlaceCue(pos)) {
         game.physics.Stop();
         game.world.PlaceCue(pos);
-        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+        if (!amHost) {
+          game.onlineCuePlacementActive = true;
+        }
+        const bool confirmed = IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
+        const bool shouldSendPlacement =
+            confirmed || now - game.lastPosSend > 1.0 / 30.0;
+        if (shouldSendPlacement) {
+          game.lastPosSend = now;
+          if (amHost) {
+            game.host.SendPositions(game.world.Balls());
+            game.syncedBalls = game.world.Balls();
+          } else {
+            game.client.SendCuePlacement(pos, confirmed);
+          }
+        }
+        if (confirmed) {
           game.rules.State().ballInHand = false;
           game.phase = Phase::Aiming;
+          game.syncedBalls = game.world.Balls();
+          if (amHost) {
+            game.onlineCuePlacementActive = false;
+            SendAuthoritativeOnlineState(game, true);
+          }
         }
       }
     } else if (isMyTurn && game.phase == Phase::Moving) {
@@ -667,15 +737,12 @@ bool UpdateOnlineMatch(Game &game, const View &view) {
       if (SyncPhysics(game)) {
         auto decision = game.rules.ApplyShot(game.shotEvents, game.world);
         game.phase = decision.nextPhase;
-        int cp = game.rules.State().currentPlayer;
-        if (amHost) {
-          game.host.SendTurn(cp);
-          game.host.SendPositions(game.world.Balls());
-          game.syncedBalls = game.world.Balls();
-        }
         if (game.phase == Phase::BallInHand) {
           game.physics.Stop();
           game.world.PlaceCue({hb::kHeadSpotX, 0.0});
+        }
+        if (amHost) {
+          SendAuthoritativeOnlineState(game, true);
         }
       }
     } else if (isMyTurn && game.phase == Phase::RackOver && !game.chatInputActive && IsKeyPressed(KEY_SPACE)) {
@@ -684,6 +751,39 @@ bool UpdateOnlineMatch(Game &game, const View &view) {
       game.world.ResetRack();
       game.rules.ResetRack(nb);
       game.phase = Phase::Aiming;
+      if (amHost) {
+        SendAuthoritativeOnlineState(game, true);
+      }
+    }
+    if (amHost && isOpponentTurn && game.phase == Phase::GroupChoice) {
+      BallGroup group = BallGroup::Open;
+      if (game.host.HasGroupChoice(&group)) {
+        game.phase = game.rules.ChooseGroup(group).nextPhase;
+        SendAuthoritativeOnlineState(game, false);
+      }
+    }
+    if (amHost && isOpponentTurn && game.phase == Phase::BallInHand) {
+      Vec2 cuePos{};
+      bool confirmed = false;
+      if (game.host.HasCuePlacement(&cuePos, &confirmed)) {
+        const Vec2 pos = ClampCuePlacement(cuePos);
+        bool accepted = false;
+        if (game.world.CanPlaceCue(pos)) {
+          game.physics.Stop();
+          game.world.PlaceCue(pos);
+          accepted = true;
+          if (confirmed) {
+            game.rules.State().ballInHand = false;
+            game.phase = Phase::Aiming;
+          }
+        }
+        if (confirmed || !accepted) {
+          SendAuthoritativeOnlineState(game, true);
+        } else {
+          game.host.SendPositions(game.world.Balls());
+          game.syncedBalls = game.world.Balls();
+        }
+      }
     }
     // Host: compute physics for opponent's shot if received
     if (amHost && isOpponentTurn && game.phase == Phase::Aiming) {
@@ -700,14 +800,11 @@ bool UpdateOnlineMatch(Game &game, const View &view) {
       if (SyncPhysics(game)) {
         auto decision = game.rules.ApplyShot(game.shotEvents, game.world);
         game.phase = decision.nextPhase;
-        int cp = game.rules.State().currentPlayer;
-        game.host.SendTurn(cp);
-        game.host.SendPositions(game.world.Balls());
-        game.syncedBalls = game.world.Balls();
         if (game.phase == Phase::BallInHand) {
           game.physics.Stop();
           game.world.PlaceCue({hb::kHeadSpotX, 0.0});
         }
+        SendAuthoritativeOnlineState(game, true);
       }
     }
     // Client: apply received shot
@@ -733,7 +830,9 @@ bool UpdateOnlineMatch(Game &game, const View &view) {
         game.client.HasPositions(&game.syncedBalls);
       }
       // Override world ball positions with synced data when not actively computing physics
-      if (!isMyTurn || game.phase != Phase::Moving) {
+      const bool waitingForCuePlacementAck =
+          isMyTurn && game.onlineCuePlacementActive;
+      if (!waitingForCuePlacementAck && game.phase != Phase::Moving) {
         ApplySyncedBalls(game);
       }
     }

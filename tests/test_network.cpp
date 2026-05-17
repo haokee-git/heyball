@@ -175,12 +175,60 @@ void T5_GameSync() {
   std::array<hb::Ball, 16> balls{};
   balls[0].pos = {1.0, 2.0};
   balls[1].pos = {3.0, 4.0};
+  balls[1].vel = {0.5, -0.25};
+  balls[1].rollOmega = {1.25, -1.5};
+  balls[1].sideOmega = 2.5;
+  balls[1].rollAngle = 0.75;
+  balls[1].decal = {0.2, -0.3};
+  balls[1].orientation = {{0.0, -1.0, 0.0,
+                           1.0, 0.0, 0.0,
+                           0.0, 0.0, 1.0}};
+  balls[1].sinkTarget = {5.0, 6.0};
   host.SendPositions(balls);
   Check(Await(0.5, [&]() { return client.HasPositions(nullptr); }, &host, &client), "client got POS");
   std::array<hb::Ball, 16> synced{};
   client.HasPositions(&synced);
   Check(synced[0].pos.x == 1.0 && synced[0].pos.y == 2.0, "pos[0] ok");
   Check(synced[1].pos.x == 3.0 && synced[1].pos.y == 4.0, "pos[1] ok");
+  Check(std::abs(synced[1].vel.x - 0.5) < 0.001 &&
+            std::abs(synced[1].vel.y + 0.25) < 0.001,
+        "vel sync ok");
+  Check(std::abs(synced[1].rollOmega.x - 1.25) < 0.001 &&
+            std::abs(synced[1].rollOmega.y + 1.5) < 0.001,
+        "roll omega sync ok");
+  Check(std::abs(synced[1].sideOmega - 2.5) < 0.001, "side spin sync ok");
+  Check(std::abs(synced[1].rollAngle - 0.75) < 0.001, "roll angle sync ok");
+  Check(std::abs(synced[1].decal.x - 0.2) < 0.001 &&
+            std::abs(synced[1].decal.y + 0.3) < 0.001,
+        "decal sync ok");
+  Check(std::abs(synced[1].orientation[1] + 1.0) < 0.001 &&
+            std::abs(synced[1].orientation[3] - 1.0) < 0.001,
+        "orientation sync ok");
+  Check(std::abs(synced[1].sinkTarget.x - 5.0) < 0.001 &&
+            std::abs(synced[1].sinkTarget.y - 6.0) < 0.001,
+        "sink target sync ok");
+
+  hb::RulesState state;
+  state.currentPlayer = 1;
+  state.winner = -1;
+  state.breakShot = false;
+  state.ballInHand = true;
+  state.players[0].group = hb::BallGroup::Solids;
+  state.players[1].group = hb::BallGroup::Stripes;
+  state.message = "player 2 ball in hand";
+  host.SendState(hb::Phase::BallInHand, state);
+  Check(Await(0.5, [&]() { return client.HasState(nullptr, nullptr); },
+              &host, &client),
+        "client got STATE");
+  hb::Phase phase = hb::Phase::Aiming;
+  hb::RulesState syncedState;
+  client.HasState(&phase, &syncedState);
+  Check(phase == hb::Phase::BallInHand, "phase sync ok");
+  Check(syncedState.currentPlayer == 1 && syncedState.ballInHand,
+        "rules state flags sync ok");
+  Check(syncedState.players[1].group == hb::BallGroup::Stripes,
+        "rules groups sync ok");
+  Check(syncedState.message == "player 2 ball in hand", "rules message sync ok");
 
   client.Disconnect();
   host.Stop();
@@ -251,6 +299,77 @@ void T7_Aim() {
   client.HasAim(&tx, &ty, &pw, &ax, &ay);
   Check(std::abs(tx + 0.5) < 0.001, "host aim tx ok");
   Check(std::abs(pw - 0.9) < 0.001, "host aim pw ok");
+
+  client.Disconnect();
+  host.Stop();
+  client.Stop();
+}
+
+// ─── Test 7b: Cue placement sync ───
+
+void T7b_CuePlacement() {
+  Msg("T7b_CuePlacement");
+  hb::NetworkHost host;
+  hb::NetworkClient client;
+  Check(host.Start("CuePlace", "", true), "host starts");
+  Check(client.Start(), "client starts");
+  PollFor(0.6, host, client);
+  Check(ConnectAndAccept(host, client, ""), "accepted");
+
+  client.SendCuePlacement({-0.25, 0.15}, false);
+  Check(Await(0.5,
+              [&]() {
+                return host.HasCuePlacement(nullptr, nullptr);
+              },
+              &host, &client),
+        "host got cue placement");
+  hb::Vec2 pos{};
+  bool confirmed = true;
+  host.HasCuePlacement(&pos, &confirmed);
+  Check(std::abs(pos.x + 0.25) < 0.001 && std::abs(pos.y - 0.15) < 0.001,
+        "cue placement coordinates ok");
+  Check(!confirmed, "cue placement preview not confirmed");
+
+  client.SendCuePlacement({0.1, -0.2}, true);
+  Check(Await(0.5,
+              [&]() {
+                hb::Vec2 p{};
+                bool c = false;
+                return host.HasCuePlacement(&p, &c) && c;
+              },
+              &host, &client),
+        "host got confirmed cue placement");
+  host.HasCuePlacement(&pos, &confirmed);
+  Check(confirmed, "cue placement confirm ok");
+  Check(std::abs(pos.x - 0.1) < 0.001 && std::abs(pos.y + 0.2) < 0.001,
+        "confirmed cue placement coordinates ok");
+
+  client.Disconnect();
+  host.Stop();
+  client.Stop();
+}
+
+// ─── Test 7c: Group choice sync ───
+
+void T7c_GroupChoice() {
+  Msg("T7c_GroupChoice");
+  hb::NetworkHost host;
+  hb::NetworkClient client;
+  Check(host.Start("GroupChoice", "", true), "host starts");
+  Check(client.Start(), "client starts");
+  PollFor(0.6, host, client);
+  Check(ConnectAndAccept(host, client, ""), "accepted");
+
+  client.SendGroupChoice(hb::BallGroup::Stripes);
+  Check(Await(0.5,
+              [&]() {
+                return host.HasGroupChoice(nullptr);
+              },
+              &host, &client),
+        "host got group choice");
+  hb::BallGroup group = hb::BallGroup::Open;
+  host.HasGroupChoice(&group);
+  Check(group == hb::BallGroup::Stripes, "group choice payload ok");
 
   client.Disconnect();
   host.Stop();
@@ -350,6 +469,63 @@ void T11_PollIntegrity() {
   client.Stop();
 }
 
+bool FindRoomByName(hb::NetworkClient &client, const std::string &name,
+                    hb::RoomInfo *out) {
+  auto rooms = client.GetRooms();
+  for (const auto &room : rooms) {
+    if (room.name == name) {
+      if (out) *out = room;
+      return true;
+    }
+  }
+  return false;
+}
+
+void T12_RecreateRoomJoinIsolation() {
+  Msg("T12_RecreateRoomJoinIsolation");
+  hb::NetworkHost host;
+  hb::NetworkClient client;
+  Check(host.Start("Alpha|Old", "", true), "first host starts");
+  Check(client.Start(), "client starts");
+
+  hb::RoomInfo first;
+  Check(Await(1.0, [&]() { return FindRoomByName(client, "Alpha Old", &first); },
+              &host, &client),
+        "client discovers first room");
+  Check(!first.roomId.empty(), "first room has id");
+  Check(first.playerCount == 1, "first room player count is 1");
+
+  host.Stop();
+  Check(host.Start("Beta", "secret", false), "recreated host starts");
+
+  hb::RoomInfo recreated;
+  Check(Await(1.0,
+              [&]() {
+                return FindRoomByName(client, "Beta", &recreated) &&
+                       recreated.hasPassword && recreated.roomId != first.roomId;
+              },
+              &host, &client),
+        "client sees recreated room metadata");
+  Check(!FindRoomByName(client, "Alpha Old", nullptr), "old room listing replaced");
+
+  Check(client.Connect(kLocalHost, "", first.roomId), "stale join starts");
+  Check(Await(1.0,
+              [&]() { return client.Disconnected() && !host.HasClient(); },
+              &host, &client),
+        "stale room id rejected without occupying host");
+  Check(!host.HasJoinRequest(nullptr), "stale join not surfaced to host UI");
+
+  Check(client.Connect(kLocalHost, "secret", recreated.roomId), "fresh join starts");
+  Check(Await(1.0,
+              [&]() { return client.IsAccepted() && host.HasClient(); },
+              &host, &client),
+        "fresh room join accepted");
+
+  client.Disconnect();
+  host.Stop();
+  client.Stop();
+}
+
 } // namespace
 
 int main() {
@@ -372,6 +548,10 @@ int main() {
   std::cout << "  T6 done " << totalFailures() << "f " << (GetTime()-ts) << "s\n" << std::flush;
   ts = GetTime(); T7_Aim();
   std::cout << "  T7 done " << totalFailures() << "f " << (GetTime()-ts) << "s\n" << std::flush;
+  ts = GetTime(); T7b_CuePlacement();
+  std::cout << "  T7b done " << totalFailures() << "f " << (GetTime()-ts) << "s\n" << std::flush;
+  ts = GetTime(); T7c_GroupChoice();
+  std::cout << "  T7c done " << totalFailures() << "f " << (GetTime()-ts) << "s\n" << std::flush;
   ts = GetTime(); T8_Disconnect();
   std::cout << "  T8 done " << totalFailures() << "f " << (GetTime()-ts) << "s\n" << std::flush;
   ts = GetTime(); T9_RoomClosed();
@@ -380,6 +560,8 @@ int main() {
   std::cout << "  T10 done " << totalFailures() << "f " << (GetTime()-ts) << "s\n" << std::flush;
   ts = GetTime(); T11_PollIntegrity();
   std::cout << "  T11 done " << totalFailures() << "f " << (GetTime()-ts) << "s\n" << std::flush;
+  ts = GetTime(); T12_RecreateRoomJoinIsolation();
+  std::cout << "  T12 done " << totalFailures() << "f " << (GetTime()-ts) << "s\n" << std::flush;
 
   std::cout << "\nTotal: " << (GetTime()-t0) << "s, " << gFailures << " failures\n" << std::flush;
   return gFailures ? 1 : 0;

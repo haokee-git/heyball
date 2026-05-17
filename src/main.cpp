@@ -99,11 +99,13 @@ struct Game {
   bool createHostIsP1 = true;
   std::string pendingJoinRoomName;
   std::string pendingJoinHostIP;
+  std::string pendingJoinRoomId;
   std::string joinPwdInput;
   int joinPwdCursor = 0;
   bool showPwd = false;
   int onlineTurn = -1;  // 0 or 1, who plays on this machine (host perspective)
   bool onlineHost = false;
+  bool onlineCuePlacementActive = false;
   int assignedPlayer = -1;  // received from host via ASSIGN message
   std::array<hb::Ball, 16> syncedBalls{};
   double opAimTipX = 0.0, opAimTipY = 0.0, opPower = 0.0, opAimX = 1.0, opAimY = 0.0;
@@ -657,6 +659,7 @@ void DrawTaperedRect(Vector2 a, Vector2 b, float wA, float wB, Color color);
 std::string LocalPlayerLabel(const Game &game, int player);
 std::string LocalStatusMessage(const Game &game);
 void ApplySyncedBalls(Game &game);
+Rectangle ChatWindowRect(const Game &game);
 void DrawCueShadow(const Game &game, const View &view) {
   if (game.phase != Phase::Aiming || game.world.CueBall().pocketed ||
       game.world.CueBall().sinking) return;
@@ -805,19 +808,21 @@ void ApplySyncedBalls(Game &game) {
     Ball &dst = game.world.Balls()[i];
     const Ball &src = game.syncedBalls[i];
     dst.pos = src.pos;
+    dst.vel = src.vel;
+    dst.rollOmega = src.rollOmega;
+    dst.sideOmega = src.sideOmega;
+    dst.rollAngle = src.rollAngle;
+    dst.decal = src.decal;
+    dst.orientation = src.orientation;
+    dst.sinkTarget = src.sinkTarget;
     dst.pocketed = src.pocketed;
     dst.sinking = src.sinking;
     dst.pocketFade = src.pocketed ? 1.0 : src.pocketFade;
-    dst.vel = {};
-    if (dst.pocketed || dst.sinking) {
-      dst.rollOmega = {};
-      dst.sideOmega = 0.0;
-    }
   }
 }
-Rectangle ControlPanelRect(float s) {
+Rectangle ControlPanelRect(float s, bool online = false) {
   return {static_cast<float>(GetScreenWidth()) - 258.0f * s, 46.0f * s,
-          224.0f * s, 390.0f * s};
+          224.0f * s, (online ? 344.0f : 390.0f) * s};
 }
 Vector2 TipControlCenter(Rectangle panel, float s) {
   return {panel.x + 112.0f * s, panel.y + 146.0f * s};
@@ -896,6 +901,7 @@ void OpenJoinPasswordDialog(Game &game, const hb::RoomInfo &room) {
   game.showJoinPwdDlg = true;
   game.pendingJoinRoomName = room.name;
   game.pendingJoinHostIP = room.hostIP;
+  game.pendingJoinRoomId = room.roomId;
   game.joinPwdInput.clear();
   game.joinPwdCursor = 0;
   game.textAllSelected = false;
@@ -908,6 +914,7 @@ void CloseJoinPasswordDialog(Game &game) {
   game.showJoinPwdDlg = false;
   game.pendingJoinRoomName.clear();
   game.pendingJoinHostIP.clear();
+  game.pendingJoinRoomId.clear();
   game.joinPwdInput.clear();
   game.joinPwdCursor = 0;
   game.bsRepeat.wasDown = false;
@@ -1003,7 +1010,8 @@ void DrawDetailedCue(Vector2 cueBall, Vector2 aimDir, float ballR,
 }
 void DrawUI(Game &game) {
   const float s = UiScale();
-  Rectangle panel = ControlPanelRect(s);
+  const bool online = game.appMode == AppMode::PlayingOnline;
+  Rectangle panel = ControlPanelRect(s, online);
   DrawRoundedFillWithBorder(panel, 0.045f, 12, {12, 13, 14, 232},
                             {50, 58, 55, 190});
   DrawTextF(game.font, "击球设置", {panel.x + 18 * s, panel.y + 17 * s}, 27 * s,
@@ -1042,15 +1050,16 @@ void DrawUI(Game &game) {
   DrawRectangleRounded({panel.x + 18 * s, panel.y + 322 * s, 188 * s, 12 * s}, 0.4f, 8, {28, 31, 31, 255});
   DrawRectangleRounded({panel.x + 18 * s, panel.y + 322 * s, static_cast<float>(188.0 * game.power * s), 12 * s},
                        0.4f, 8, {143, 170, 151, 255});
-  Button(game.font, {panel.x + 18 * s, panel.y + 354 * s, 188 * s, 30 * s},
-         "重新摆球", true);
+  if (!online) {
+    Button(game.font, {panel.x + 18 * s, panel.y + 354 * s, 188 * s, 30 * s},
+           "重新摆球", true);
+  }
   float msgX = 48.0f * s;
   float msgW = static_cast<float>(GetScreenWidth()) - 96.0f * s;
   if (game.appMode == AppMode::PlayingOnline) {
-    const float os = OnlineUiScale();
-    const float chatRight = 12.0f * os + OnlineChatWidth(os);
-    msgX = chatRight + 20.0f * os;
-    msgW = static_cast<float>(GetScreenWidth()) - msgX - 48.0f * s;
+    const Rectangle chat = ChatWindowRect(game);
+    msgX = 48.0f * s;
+    msgW = std::max(160.0f * s, chat.x - msgX - 18.0f * s);
   }
   Rectangle msg{msgX, static_cast<float>(GetScreenHeight()) - 58.0f * s,
                 msgW, 34.0f * s};
@@ -1148,16 +1157,40 @@ void DrawTextInputWithCursor(Font font, const std::string &text, int cursor,
                   static_cast<int>(barH), color);
   }
 }
-void DrawChatWindow(Game &game) {
+Rectangle ChatWindowRect(const Game &game) {
   const float sh = static_cast<float>(GetScreenHeight());
   const float us = OnlineUiScale();
-  const float cw = OnlineChatWidth(us);
-  const float ch = 150.0f * us;
-  const float cx = 12.0f * us;
-  const float cy = sh - ch - 12.0f * us;
+  float cw = OnlineChatWidth(us);
+  float ch = 150.0f * us;
+
+  if (game.appMode != AppMode::PlayingOnline) {
+    return {12.0f * us, sh - ch - 12.0f * us, cw, ch};
+  }
+
+  const float gap = 12.0f * us;
+  const Rectangle panel = ControlPanelRect(UiScale(), true);
+  const float rightX = panel.x;
+  cw = panel.width;
+
+  float cy = panel.y + panel.height;
+  float availableH = sh - cy - gap;
+  ch = std::max(86.0f * us, availableH);
+  if (cy + ch > sh - gap) {
+    cy = std::max(gap, sh - gap - ch);
+  }
+  return {rightX, cy, cw, ch};
+}
+void DrawChatWindow(Game &game) {
+  const float us = OnlineUiScale();
+  const Rectangle chat = ChatWindowRect(game);
+  const float cx = chat.x;
+  const float cy = chat.y;
+  const float cw = chat.width;
+  const float ch = chat.height;
   DrawRectangleRounded({cx - 2, cy - 2, cw + 4, ch + 4}, 0.04f, 8, {8, 9, 10, 200});
   DrawRectangleRounded({cx, cy, cw, ch}, 0.04f, 8, {15, 17, 18, 220});
-  int visible = game.chatInputActive ? 5 : 7;
+  const int maxLines = std::max(2, static_cast<int>((ch - 42.0f * us) / (18.0f * us)));
+  int visible = game.chatInputActive ? std::max(2, maxLines - 1) : maxLines;
   int start = std::max(0, static_cast<int>(game.chatHistory.size()) - visible);
   float y = cy + 8.0f * us;
   for (int i = start; i < static_cast<int>(game.chatHistory.size()); ++i) {
@@ -1747,10 +1780,16 @@ bool HandleTitleBarInput(Game &game) {
 }
 bool HandleUiInput(Game &game) {
   const float s = UiScale();
+  const bool online = game.appMode == AppMode::PlayingOnline;
   const Vector2 mouse = GetMousePosition();
-  Rectangle panel = ControlPanelRect(s);
+  Rectangle panel = ControlPanelRect(s, online);
   const Vector2 tipCenter = TipControlCenter(panel, s);
   const float tipR = 50.0f * s;
+  if (IsMouseButtonDown(MOUSE_LEFT_BUTTON) && Vector2Distance(mouse, tipCenter) <= tipR) {
+    game.tipX = hb::Clamp((mouse.x - tipCenter.x) / tipR, -1.0, 1.0);
+    game.tipY = hb::Clamp(-(mouse.y - tipCenter.y) / tipR, -1.0, 1.0);
+    return true;
+  }
   if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
     if (game.helpOpen) {
       const Rectangle help = HelpWindowRect(s);
@@ -1774,7 +1813,8 @@ bool HandleUiInput(Game &game) {
       game.tipY = 0.0;
       return true;
     }
-    if (PointInRect(mouse, {panel.x + 18 * s, panel.y + 354 * s, 188 * s, 30 * s})) {
+    if (!online &&
+        PointInRect(mouse, {panel.x + 18 * s, panel.y + 354 * s, 188 * s, 30 * s})) {
       game.physics.Stop();
       game.world.ResetRack();
       game.rules.ResetRack(1 - game.rules.State().currentPlayer);
@@ -1792,6 +1832,9 @@ bool HandleUiInput(Game &game) {
         game.phase = game.rules.ChooseGroup(BallGroup::Stripes).nextPhase;
         return true;
       }
+    }
+    if (PointInRect(mouse, panel)) {
+      return true;
     }
   }
   return false;

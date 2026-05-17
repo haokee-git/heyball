@@ -119,6 +119,21 @@ bool AsyncNetworkHost::HasReady() const { return LockedFlag(&HostEvents::hasRead
 
 bool AsyncNetworkHost::HasUnready() const { return LockedFlag(&HostEvents::hasUnready); }
 
+bool AsyncNetworkHost::HasCuePlacement(hb::Vec2 *pos, bool *confirmed) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (frame_.hasCuePlacement) {
+    if (pos) *pos = frame_.cuePlacementPos;
+    if (confirmed) *confirmed = frame_.cuePlacementConfirmed;
+  }
+  return frame_.hasCuePlacement;
+}
+
+bool AsyncNetworkHost::HasGroupChoice(hb::BallGroup *group) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (frame_.hasGroupChoice && group) *group = frame_.groupChoice;
+  return frame_.hasGroupChoice;
+}
+
 bool AsyncNetworkHost::HasShot(hb::ShotParams *out) const {
   std::lock_guard<std::mutex> lock(mutex_);
   if (frame_.hasShot && out) *out = frame_.shot;
@@ -178,6 +193,10 @@ void AsyncNetworkHost::SendAssign(int player) {
 
 void AsyncNetworkHost::SendTurn(int player) {
   WithHost([&](hb::NetworkHost &h) { h.SendTurn(player); });
+}
+
+void AsyncNetworkHost::SendState(hb::Phase phase, const hb::RulesState &state) {
+  WithHost([&](hb::NetworkHost &h) { h.SendState(phase, state); });
 }
 
 void AsyncNetworkHost::SendPositions(const std::array<hb::Ball, 16> &balls) {
@@ -243,6 +262,18 @@ void AsyncNetworkHost::CaptureEventsLocked() {
   }
   if (host_.HasReady()) queued_.hasReady = true;
   if (host_.HasUnready()) queued_.hasUnready = true;
+  hb::Vec2 cuePos{};
+  bool cueConfirmed = false;
+  if (host_.HasCuePlacement(&cuePos, &cueConfirmed)) {
+    queued_.hasCuePlacement = true;
+    queued_.cuePlacementPos = cuePos;
+    queued_.cuePlacementConfirmed = cueConfirmed;
+  }
+  hb::BallGroup group = hb::BallGroup::Open;
+  if (host_.HasGroupChoice(&group)) {
+    queued_.hasGroupChoice = true;
+    queued_.groupChoice = group;
+  }
   hb::ShotParams shot;
   if (host_.HasShot(&shot)) {
     queued_.hasShot = true;
@@ -307,9 +338,10 @@ std::vector<hb::RoomInfo> AsyncNetworkClient::GetRooms() {
   return client_.GetRooms();
 }
 
-bool AsyncNetworkClient::Connect(const std::string &hostIP, const std::string &password) {
+bool AsyncNetworkClient::Connect(const std::string &hostIP, const std::string &password,
+                                 const std::string &roomId) {
   std::lock_guard<std::mutex> lock(mutex_);
-  return client_.Connect(hostIP, password);
+  return client_.Connect(hostIP, password, roomId);
 }
 
 void AsyncNetworkClient::Disconnect() {
@@ -349,6 +381,15 @@ bool AsyncNetworkClient::HasTurn(int *player) const {
   std::lock_guard<std::mutex> lock(mutex_);
   if (frame_.hasTurn && player) *player = frame_.turnPlayer;
   return frame_.hasTurn;
+}
+
+bool AsyncNetworkClient::HasState(hb::Phase *phase, hb::RulesState *state) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (frame_.hasState) {
+    if (phase) *phase = frame_.statePhase;
+    if (state) *state = frame_.rulesState;
+  }
+  return frame_.hasState;
 }
 
 bool AsyncNetworkClient::HasPositions(std::array<hb::Ball, 16> *balls) const {
@@ -398,6 +439,14 @@ void AsyncNetworkClient::SendReady() {
 
 void AsyncNetworkClient::SendUnready() {
   WithClient([](hb::NetworkClient &c) { c.SendUnready(); });
+}
+
+void AsyncNetworkClient::SendCuePlacement(hb::Vec2 pos, bool confirmed) {
+  WithClient([&](hb::NetworkClient &c) { c.SendCuePlacement(pos, confirmed); });
+}
+
+void AsyncNetworkClient::SendGroupChoice(hb::BallGroup group) {
+  WithClient([&](hb::NetworkClient &c) { c.SendGroupChoice(group); });
 }
 
 void AsyncNetworkClient::SendShot(double tipX, double tipY, double power,
@@ -460,6 +509,13 @@ void AsyncNetworkClient::CaptureEventsLocked() {
   if (client_.HasTurn(&player)) {
     queued_.hasTurn = true;
     queued_.turnPlayer = player;
+  }
+  hb::Phase phase = hb::Phase::Aiming;
+  hb::RulesState state{};
+  if (client_.HasState(&phase, &state)) {
+    queued_.hasState = true;
+    queued_.statePhase = phase;
+    queued_.rulesState = state;
   }
   std::array<hb::Ball, 16> balls{};
   if (client_.HasPositions(&balls)) {
